@@ -49,12 +49,24 @@ export const CHAIN_NAMES: Record<string, string> = {
   "eip155:42161": "Arbitrum",
   "eip155:43114": "Avalanche",
   "eip155:59144": "Linea",
+  "eip155:5042": "Arc",
+  "eip155:5042002": "Arc Testnet",
   "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp": "Solana",
   "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1": "Solana Devnet",
   "sui:mainnet": "Sui",
   "sui:testnet": "Sui Testnet",
   "stellar:pubnet": "Stellar",
   "stellar:testnet": "Stellar Testnet",
+};
+
+/**
+ * EVM chains whose native coin is not ETH but still wears `slip44:60`.
+ * Arc's gas token is USDC: calling it "ETH" on an approval would name
+ * the wrong asset.
+ */
+const NATIVE_SYMBOL_BY_CHAIN: Record<string, string> = {
+  "eip155:5042": "USDC",
+  "eip155:5042002": "USDC",
 };
 
 function chainName(caip2: string): string {
@@ -69,6 +81,8 @@ function chainName(caip2: string): string {
  */
 function assetSymbolFromCaip19(asset: string | undefined): string | undefined {
   if (!asset) return undefined;
+  const nativeOverride = NATIVE_SYMBOL_BY_CHAIN[asset.split("/")[0]];
+  if (nativeOverride && asset.includes("/slip44:")) return nativeOverride;
   if (asset.includes("/slip44:60")) return "ETH";
   if (asset.includes("/slip44:501")) return "SOL";
   if (asset.endsWith("::sui::SUI")) return "SUI";
@@ -194,9 +208,10 @@ export function approvalSummaryFromToolInput(
    * SMALLEST UNITS, so without decimals the only honest options are to
    * omit the number or print "5000000" for 5 USDC. Callers that can reach
    * the token catalogue (see `resolveAssetMeta`) supply it so the
-   * approval can state the real amount.
+   * approval can state the real amount. `toSymbol` names the asset a
+   * same-chain swap pays out, which the args carry only as a CAIP-19.
    */
-  assetMeta?: { symbol?: string; decimals?: number },
+  assetMeta?: { symbol?: string; decimals?: number; toSymbol?: string },
 ): string {
   const str = (k: string): string | undefined =>
     typeof input[k] === "string" && (input[k] as string).trim().length > 0
@@ -217,6 +232,25 @@ export function approvalSummaryFromToolInput(
     const symbol =
       assetMeta?.symbol ?? assetSymbolFromCaip19(str("from_asset"));
     const amount = formatSmallestUnits(str("amount_raw"), assetMeta?.decimals);
+    // A same-chain route is a swap (Tower on Arc). The payout lands in the
+    // signing wallet itself, so there is no destination to call out, and
+    // "Bridge from Arc to Arc" would describe something that is not
+    // happening.
+    if (fromChain === toChain) {
+      const toSymbol =
+        assetMeta?.toSymbol ?? assetSymbolFromCaip19(str("to_asset"));
+      const where = `on ${chainName(fromChain)}`;
+      return factsFirstSummary(
+        {
+          action: "Swap",
+          amount,
+          asset: symbol,
+          suffix: toSymbol ? `to ${toSymbol} ${where}` : where,
+        },
+        {},
+        `Swap ${where}`,
+      );
+    }
     const toAddress = str("to_address");
     const route = `from ${chainName(fromChain)} to ${chainName(toChain)}`;
     return factsFirstSummary(

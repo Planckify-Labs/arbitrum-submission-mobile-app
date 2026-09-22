@@ -32,7 +32,7 @@ import {
   specialWarning,
 } from "@/components/agent/ApprovalSheet";
 import { approvalSummaryFromToolInput } from "@/components/home/TakumiAgent/StructuredUI/approvalSummary";
-import { resolveAssetMeta } from "@/components/home/TakumiAgent/StructuredUI/resolveAssetMeta";
+import { resolveApprovalAssetMeta } from "@/components/home/TakumiAgent/StructuredUI/resolveAssetMeta";
 import { useIsAuthenticated } from "@/hooks/queries/useAuth";
 import type {
   ConversationCache,
@@ -1758,11 +1758,9 @@ export default function AgentMode() {
               // Amounts in the args are smallest units; the catalogue
               // supplies the decimals so the sheet states a real number
               // rather than "5000000".
-              resolveAssetMeta(
+              resolveApprovalAssetMeta(
                 blockchains,
-                typeof approvalState.payload.input.from_asset === "string"
-                  ? approvalState.payload.input.from_asset
-                  : undefined,
+                approvalState.payload.input,
               ),
             )}
             warning={specialWarning(approvalState.payload.name)}

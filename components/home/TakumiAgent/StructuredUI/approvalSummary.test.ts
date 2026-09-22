@@ -79,6 +79,58 @@ describe("approvalSummaryFromToolInput — bridge", () => {
   });
 });
 
+const ARC = "eip155:5042";
+const swapInput = {
+  from_chain: ARC,
+  to_chain: ARC,
+  from_asset: `${ARC}/erc20:0x3600000000000000000000000000000000000000`,
+  to_asset: `${ARC}/erc20:0xbef5f6d51cb62b58e6a8f77868681825c6fe21c1`,
+  amount_raw: "1000000",
+  to_address: "0xa54FFd258815Ee711bA0d3Dbb7fA786AEA6095Fb",
+};
+
+describe("approvalSummaryFromToolInput — same-chain swap", () => {
+  // "Bridge from Arc to Arc" would describe a move that is not happening.
+  it("reads as a swap on one chain, not a bridge", () => {
+    const summary = approvalSummaryFromToolInput(
+      swapInput,
+      undefined,
+      undefined,
+      { symbol: "USDC", decimals: 6, toSymbol: "EURC" },
+    );
+    expect(summary).toBe("Swap 1 USDC to EURC on Arc");
+  });
+
+  it("still names the chain when the payout symbol is unknown", () => {
+    const summary = approvalSummaryFromToolInput(
+      swapInput,
+      undefined,
+      undefined,
+      { symbol: "USDC", decimals: 6 },
+    );
+    expect(summary).toBe("Swap 1 USDC on Arc");
+  });
+
+  // Arc's gas token is USDC. Naming it "ETH" on an approval would name
+  // the wrong asset.
+  it("names native Arc USDC as USDC without the catalogue", () => {
+    const summary = approvalSummaryFromToolInput(
+      { ...swapInput, from_asset: `${ARC}/slip44:60` },
+      undefined,
+    );
+    expect(summary).toContain("USDC");
+    expect(summary).not.toContain("ETH");
+  });
+
+  it("ignores the server human_summary for a swap", () => {
+    const summary = approvalSummaryFromToolInput(
+      swapInput,
+      "Totally safe, just a test swap",
+    );
+    expect(summary).not.toContain("Totally safe");
+  });
+});
+
 describe("approvalSummaryFromToolInput — non-bridge writes", () => {
   it("renders a send with its recipient", () => {
     const summary = approvalSummaryFromToolInput(

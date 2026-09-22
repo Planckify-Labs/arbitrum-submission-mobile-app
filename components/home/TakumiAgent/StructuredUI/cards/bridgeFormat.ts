@@ -174,7 +174,12 @@ export function mechanismLabel(mechanism: string | undefined): string | null {
  */
 export function outcomeCopy(
   outcome: TBridgeOutcome | null | undefined,
-  ctx: { receivedSymbol?: string; refundChainLabel?: string },
+  ctx: {
+    receivedSymbol?: string;
+    refundChainLabel?: string;
+    /** Same-chain route: a swap, not a transfer between chains. */
+    swap?: boolean;
+  },
 ): {
   title: string;
   body: string | null;
@@ -183,7 +188,7 @@ export function outcomeCopy(
   switch (outcome) {
     case "completed":
       return {
-        title: "Transfer complete",
+        title: ctx.swap ? "Swap complete" : "Transfer complete",
         body: null,
         tone: "success",
       };
@@ -205,7 +210,9 @@ export function outcomeCopy(
       };
     case "failed":
       return {
-        title: "Transfer did not go through",
+        title: ctx.swap
+          ? "Swap did not go through"
+          : "Transfer did not go through",
         body: "Your funds were not moved. You can try again in a moment.",
         tone: "error",
       };
@@ -219,10 +226,13 @@ export function outcomeCopy(
  * ~15 to 19 minutes of a standard transfer goes, and it is the step users
  * stare at, so it says what is actually happening.
  */
-export function phaseCopy(phase: TBridgePhase | undefined): string {
+export function phaseCopy(
+  phase: TBridgePhase | undefined,
+  swap = false,
+): string {
   switch (phase) {
     case "pending_source":
-      return "Confirming on the source chain";
+      return swap ? "Confirming the swap" : "Confirming on the source chain";
     case "pending_attestation":
       return "Waiting for the transfer to be confirmed";
     case "pending_destination":
@@ -375,7 +385,7 @@ export function declinedBridgeCopy(
 export function noRouteCopy(reason: string | undefined): string {
   switch (reason) {
     case "same_chain":
-      return "Those are the same chain, so there is nothing to bridge.";
+      return "Swaps within a single chain are not available on this network yet.";
     case "chain_not_supported":
       return "We cannot move funds between those two chains yet.";
     case "asset_not_supported":

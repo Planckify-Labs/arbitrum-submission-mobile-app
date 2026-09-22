@@ -71,3 +71,20 @@ export function resolveAssetMeta(
   );
   return token ? { symbol: token.symbol, decimals: token.decimals } : undefined;
 }
+
+/**
+ * The metadata an approval summary needs from a write tool's raw args:
+ * the sent asset's symbol + decimals, plus the received asset's symbol
+ * so a same-chain swap can say what it pays out.
+ */
+export function resolveApprovalAssetMeta(
+  blockchains: TBlockchain[] | undefined,
+  input: Record<string, unknown>,
+): (AssetMeta & { toSymbol?: string }) | undefined {
+  const caip = (k: string) =>
+    typeof input[k] === "string" ? (input[k] as string) : undefined;
+  const from = resolveAssetMeta(blockchains, caip("from_asset"));
+  const toSymbol = resolveAssetMeta(blockchains, caip("to_asset"))?.symbol;
+  if (!from && !toSymbol) return undefined;
+  return { ...from, ...(toSymbol ? { toSymbol } : {}) };
+}

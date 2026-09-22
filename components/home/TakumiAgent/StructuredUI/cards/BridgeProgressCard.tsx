@@ -58,7 +58,7 @@ import type { Namespace } from "@/services/chains/types";
 import { tapFeedback } from "@/utils/hapticsUtils";
 import { agentErrorCopy } from "../agentErrorCopy";
 import { approvalSummaryFromToolInput } from "../approvalSummary";
-import { resolveAssetMeta } from "../resolveAssetMeta";
+import { resolveApprovalAssetMeta } from "../resolveAssetMeta";
 import type { ToolComponentProps } from "../types";
 import WriteApprovalGate from "../WriteApprovalGate";
 import { AddWalletErrorAction } from "./AddWalletErrorAction";
@@ -112,6 +112,7 @@ type BridgeProgressData = {
   steps?: TBridgeRouteStep[];
   duration_range_seconds?: [number, number];
   to?: { token?: TBridgeToken; amountRaw?: string; chain?: string };
+  from?: { chain?: string; chainName?: string };
 };
 
 type BridgeProgressOutput = {
@@ -149,9 +150,42 @@ type DisplayStep = {
   hint?: string;
 };
 
+/**
+ * A same-chain route is a swap (Tower on Arc): one transaction that is
+ * final when its receipt lands. It has no attestation or delivery leg, so
+ * showing the bridge's four steps would promise a wait that never comes.
+ */
+function isSwap(data: BridgeProgressData): boolean {
+  // `bridge_status` carries flat chain ids; `bridge_execute` carries the
+  // quote's `from` / `to` sides.
+  const from = data.from_chain ?? data.from?.chain;
+  const to = data.to_chain ?? data.to?.chain;
+  return !!from && from === to;
+}
+
 function buildSteps(data: BridgeProgressData): DisplayStep[] {
   const hasApprove = (data.steps ?? []).some((s) => s.kind === "approve");
   const steps: DisplayStep[] = [];
+
+  if (isSwap(data)) {
+    const chain =
+      data.from_chain_name ??
+      data.from?.chainName ??
+      chainLabel(data.from_chain ?? data.from?.chain);
+    if (hasApprove) {
+      steps.push({
+        key: "approve",
+        label: "Allowed your token to be swapped",
+        completeAtPhase: 0,
+      });
+    }
+    steps.push({
+      key: "swap",
+      label: `Swapped on ${chain}`,
+      completeAtPhase: 3,
+    });
+    return steps;
+  }
 
   if (hasApprove) {
     steps.push({
@@ -290,7 +324,10 @@ const BridgeProgressCard: React.FC<
   // Raw tool args carry `amount_raw` in smallest units; without decimals
   // the approval would read "Bridge 5000000".
   const { data: blockchains } = useBlockchainsWithStorage({ isActive: true });
-  const assetMeta = resolveAssetMeta(blockchains, input.from_asset);
+  const assetMeta = resolveApprovalAssetMeta(
+    blockchains,
+    input as Record<string, unknown>,
+  );
   // The user's own pick overrides the model's `to_address`, which is built
   // from conversation history and still names the previous wallet right
   // after a switch. The executor resolves the SAME way, so approving what
@@ -441,9 +478,11 @@ const BridgeProgressCard: React.FC<
   const current = phaseIndex(data.phase);
   const steps = buildSteps(data);
 
+  const swap = isSwap(data);
   const copy = outcomeCopy(outcome, {
     receivedSymbol: data.received_token?.symbol,
     refundChainLabel: chainLabel(data.refund_chain),
+    swap,
   });
 
   const borderTone =
@@ -477,7 +516,7 @@ const BridgeProgressCard: React.FC<
           <Clock size={15} color={iconColor} />
         )}
         <Text className="text-xs font-bold uppercase tracking-wide text-light-matte-black">
-          {outcome ? copy.title : phaseCopy(data.phase)}
+          {outcome ? copy.title : phaseCopy(data.phase, swap)}
         </Text>
       </View>
 

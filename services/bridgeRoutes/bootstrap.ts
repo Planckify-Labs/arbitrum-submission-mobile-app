@@ -14,6 +14,7 @@
 
 import { cctpStellarBridgeAdapter } from "./adapters/cctpStellarAdapter";
 import { lifiBridgeAdapter } from "./adapters/lifiAdapter";
+import { towerBridgeAdapter } from "./adapters/towerAdapter";
 import { listBridgeAdapters, registerBridgeAdapter } from "./registry";
 
 let booted = false;
@@ -27,6 +28,10 @@ export function bootstrapBridgeAdapters(): void {
   // `cctp` — USDC only, Stellar-only routes. Covers exactly what LI.FI
   // cannot, which is the case the registry exists to absorb (§3.2, §5.4).
   registerBridgeAdapter(cctpStellarBridgeAdapter);
+
+  // `tower` — same-chain swaps on Arc. The two above refuse same-chain
+  // routes, so there is nothing to arbitrate.
+  registerBridgeAdapter(towerBridgeAdapter);
 
   booted = true;
 }

@@ -171,6 +171,16 @@ describe("outcomeCopy (§7.7.1 — DONE does not mean success)", () => {
     expect(outcomeCopy(null, {}).title).toBe("In progress");
   });
 
+  it("calls a same-chain route a swap, not a transfer", () => {
+    expect(outcomeCopy("completed", { swap: true }).title).toBe(
+      "Swap complete",
+    );
+    expect(outcomeCopy("failed", { swap: true }).title).toBe(
+      "Swap did not go through",
+    );
+    expect(phaseCopy("pending_source", true)).toBe("Confirming the swap");
+  });
+
   it("uses no em-dashes anywhere in user-facing copy", () => {
     const outcomes = [
       "completed",
@@ -194,6 +204,7 @@ describe("outcomeCopy (§7.7.1 — DONE does not mean success)", () => {
       "settled",
     ] as const) {
       expect(phaseCopy(phase)).not.toContain("—");
+      expect(phaseCopy(phase, true)).not.toContain("—");
     }
     for (const reason of [
       "same_chain",
@@ -209,7 +220,7 @@ describe("outcomeCopy (§7.7.1 — DONE does not mean success)", () => {
 
 describe("noRouteCopy (§7.6 — capability boundary, not an error)", () => {
   it("explains each boundary plainly without provider text", () => {
-    expect(noRouteCopy("same_chain")).toContain("same chain");
+    expect(noRouteCopy("same_chain")).toContain("single chain");
     expect(noRouteCopy("chain_not_supported")).toContain("cannot move funds");
     // A failed CHECK must not be reported as "unsupported".
     expect(noRouteCopy("check_unavailable")).toContain("could not check");
