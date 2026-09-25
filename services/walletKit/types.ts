@@ -310,6 +310,33 @@ export interface SendContractTransactionArgs {
   value?: bigint;
 }
 
+/** Arguments for `WalletKitAdapter.estimateContractCallFee`. */
+export interface EstimateContractCallFeeArgs {
+  from: string;
+  chain: ChainConfig;
+  to: `0x${string}`;
+  data: `0x${string}`;
+  value?: bigint;
+  /**
+   * Gas to assume when the node refuses to estimate (a call that would
+   * revert in its current state — e.g. before the ERC-20 allowance the
+   * call needs exists). Lets a pre-flight still price the fee.
+   */
+  fallbackGas?: bigint;
+}
+
+/**
+ * What a contract call will cost in the chain's own coin, the way the
+ * node will actually bill it — gas limit × fee cap (Monad bills the
+ * limit, not gas used; other chains bill at most this). `feeWei` is the
+ * balance the sender must hold on top of `value`.
+ */
+export interface ContractCallFeeEstimate {
+  gas: bigint;
+  maxFeePerGas: bigint;
+  feeWei: bigint;
+}
+
 /**
  * Arguments for `WalletKitAdapter.getTokenAllowance` — reads how much of
  * `tokenAddress` the `owner` has approved `spender` to pull.
@@ -708,6 +735,12 @@ export interface Estimate7710TransactionArgs {
   transactions: RelayerBundleEntry[];
   /** ≤1 entry; for an in-flight EIP-7702 upgrade combined with the send. */
   authorizationList?: RelayerAuthorizationEntry[];
+  /**
+   * SI-1 overcharge ceiling in the FEE token's atoms. Callers that know
+   * the fee token (`oneShotRelayerProvider`) derive it from its decimals
+   * via `relayerFeeSafetyMaxAtoms`; omitted → the 6-decimal default.
+   */
+  feeSafetyMax?: bigint;
 }
 
 export interface Estimate7710TransactionResult {
@@ -1198,6 +1231,17 @@ export interface WalletKitAdapter {
    * Solana kit leaves this `undefined`. Consumers presence-check.
    */
   sendContractTransaction?(args: SendContractTransactionArgs): Promise<string>;
+
+  /**
+   * Estimates the native-coin fee of a contract call BEFORE it is signed,
+   * so a payer whose balance can't cover it is told so in plain words with
+   * real numbers, instead of a node's opaque "execution reverted" (which
+   * is how Monad reports a fee shortfall). EVM-only; consumers
+   * presence-check.
+   */
+  estimateContractCallFee?(
+    args: EstimateContractCallFeeArgs,
+  ): Promise<ContractCallFeeEstimate>;
 
   /**
    * Reads an ERC-20 allowance. EVM-only; chains whose token transfers are

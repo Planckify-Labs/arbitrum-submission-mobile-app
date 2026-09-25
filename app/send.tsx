@@ -40,10 +40,8 @@ import { ProvenanceBanner } from "@/components/deeplinks/ProvenanceBanner";
 import RecipientPickerModal from "@/components/send/RecipientPickerModal";
 import TokenSelectorModal from "@/components/wallet/TokenSelectorModal";
 import WalletSelectorModal from "@/components/wallet/WalletSelectorModal";
-import { useIsAuthenticated } from "@/hooks/queries/useAuth";
 import { useBlockchains } from "@/hooks/queries/useBlockchains";
 import { useTokens } from "@/hooks/queries/useTokens";
-import { useCreateTransaction } from "@/hooks/queries/useTransactions";
 import { useAddressBook } from "@/hooks/useAddressBook";
 import { usePreferredGasToken } from "@/hooks/usePreferredGasToken";
 import { useWallet } from "@/hooks/useWallet";
@@ -51,8 +49,10 @@ import { buildChainConfigFromBlockchain } from "@/hooks/useWallet.helpers";
 import { toChainTag } from "@/services/analytics/chainTag";
 import { track } from "@/services/analytics/posthog";
 import type { Provenance } from "@/services/deeplinks/types";
+import { classifySendError, sendErrorCopy } from "@/services/errors/sendErrors";
 import { pollRelayerTaskHash } from "@/services/gasAbstraction/pollTaskStatus";
 import { resolveGasPayment } from "@/services/gasAbstraction/resolveGasPayment";
+import { recordTransfer } from "@/services/transfers/transferRecordOutbox";
 import { classifySuiRecipient } from "@/utils/walletUtils";
 
 /**
@@ -81,7 +81,7 @@ function splitFormattedNative(formatted: string): {
 
 /**
  * Formats a raw token amount (smallest units) into a trimmed decimal
- * string — used to show the abstracted (USDC) gas fee on the success
+ * string — used to show the abstracted (stablecoin) gas fee on the success
  * screen. Mirrors the manual token-balance formatting below; kept here so
  * the screen stays namespace-agnostic (no viem `formatUnits` import path
  * difference between native and token).
@@ -119,9 +119,7 @@ export default function SendScreen() {
   // until the mismatch resolves.
   const kitMatchesChain = kit.namespace === activeChain.namespace;
 
-  const { isAuthenticated } = useIsAuthenticated();
   const { preferredGasToken } = usePreferredGasToken();
-  const { mutateAsync: createTransaction } = useCreateTransaction();
   const { data: blockchains } = useBlockchains();
   const activeBackendChain = React.useMemo(() => {
     if (!blockchains) return null;
@@ -587,7 +585,7 @@ export default function SendScreen() {
 
   const validateInputs = useCallback(() => {
     if (!recipient) {
-      console.error("Error: Please enter a recipient address");
+      Alert.alert("Who are you sending to?", "Pick a recipient first.");
       return false;
     }
 
@@ -601,27 +599,38 @@ export default function SendScreen() {
         const verdict = classifySuiRecipient(recipient);
         if (!verdict.ok && verdict.kind === "legacy20") {
           if (__DEV__) console.error(`Error: ${verdict.message}`);
+          Alert.alert(
+            "Check the recipient",
+            "This looks like an older address format that can't receive here. Ask the recipient for their current address.",
+          );
           return false;
         }
       }
-      console.error("Error: Invalid recipient address for the active chain");
+      Alert.alert(
+        "Check the recipient",
+        "That doesn't look like a valid recipient. Pick one from your contacts or paste it again.",
+      );
       return false;
     }
 
     if (!amount || parseFloat(amount) <= 0) {
-      console.error("Error: Please enter a valid amount");
+      Alert.alert("Enter an amount", "Enter how much you'd like to send.");
       return false;
     }
 
+    // Pre-flight balance checks, worded for someone who has never heard
+    // of gas: the copy in `sendErrorCopy` is the single source for this.
     if (selectedToken?.isNativeCurrency !== false) {
       const raw = kit.parseNativeAmount(amount, activeChain);
       if (raw <= 0n || raw > balance) {
-        console.error(
-          "Insufficient Balance:",
-          `You don't have enough ${nativeSymbol || "funds"} to complete this transaction.`,
-        );
+        const copy = sendErrorCopy("insufficient_balance", nativeSymbol);
+        Alert.alert(copy.title, copy.message);
         return false;
       }
+    } else if (parseFloat(amount) > parseFloat(tokenBalance || "0")) {
+      const copy = sendErrorCopy("insufficient_balance", selectedToken.symbol);
+      Alert.alert(copy.title, copy.message);
+      return false;
     }
 
     if (assetReceivableWarning) {
@@ -637,6 +646,8 @@ export default function SendScreen() {
     recipient,
     activeChain,
     selectedToken?.isNativeCurrency,
+    selectedToken?.symbol,
+    tokenBalance,
     nativeSymbol,
     assetReceivableWarning,
   ]);
@@ -662,7 +673,7 @@ export default function SendScreen() {
       let hash: string;
       // What the user paid network gas in — surfaced on the success
       // screen. Symbol is always known; the amount is exact only on the
-      // abstracted (USDC) path, where the relayer locks the fee.
+      // abstracted (stablecoin) path, where the relayer locks the fee.
       let gasFeeSymbol = nativeSymbol;
       let gasFeeAmount = "";
       if (selectedToken && selectedToken.isNativeCurrency === false) {
@@ -671,9 +682,9 @@ export default function SendScreen() {
         const tokenAmount = parseUnits(amount, decimals);
         const contractAddress = selectedToken.contractAddress!;
 
-        // Decide how gas is paid (USDC abstraction vs native) via the
-        // single gas-payment policy — the same seam the agent uses. No
-        // chain/provider branching here.
+        // Decide how gas is paid (stablecoin abstraction vs native) via
+        // the single gas-payment policy — the same seam the agent uses.
+        // No chain/provider branching here.
         const intent = {
           to: recipient,
           tokenAddress: contractAddress,
@@ -689,24 +700,30 @@ export default function SendScreen() {
         });
 
         if (plan.mode === "blocked") {
-          // Prefer USDC, else block — never silently spend native gas.
+          // Prefer the stablecoin, else block — never silently spend
+          // native gas. Copy names the token the user actually chose.
+          const feeSymbol = plan.feeToken.symbol;
           setIsLoading(false);
           Alert.alert(
-            "Not enough USDC",
-            "You don't have enough USDC to cover this transfer plus the network fee. Add USDC, or switch your gas token to native in Gas Settings.",
+            `Not enough ${feeSymbol}`,
+            `You don't have enough ${feeSymbol} to cover this transfer plus the network fee. Add ${feeSymbol}, or switch the fee currency back to native in Gas Settings.`,
           );
           return;
         }
 
         if (plan.mode === "abstracted") {
+          const feeSymbol = plan.quote.feeToken.symbol;
           try {
-            setTransactionStatus("Paying gas in USDC…");
+            setTransactionStatus(`Paying the network fee in ${feeSymbol}…`);
+            // Execute with the token the quote resolved, not the raw
+            // preference, so quote and send can never disagree.
             const execResult = await plan.provider.execute({
               wallet: activeWallet,
               chain: activeChain,
               intent,
+              feeTokenSymbol: feeSymbol,
             });
-            // Show the exact, price-locked gas fee in its token (USDC).
+            // Show the exact, price-locked gas fee in its token.
             const feeTokenInfo = execResult.feeToken ?? plan.quote.feeToken;
             gasFeeSymbol = feeTokenInfo.symbol;
             const feeAtoms = execResult.feeAmount ?? plan.quote.feeAmount;
@@ -722,7 +739,7 @@ export default function SendScreen() {
             setIsLoading(false);
             Alert.alert(
               "Transfer failed",
-              "We couldn't complete your gasless transfer. Please try again.",
+              `We couldn't send this transfer with the fee paid in ${feeSymbol}. Please try again, or switch the fee currency back to native in Gas Settings.`,
             );
             return;
           }
@@ -758,47 +775,41 @@ export default function SendScreen() {
       console.log("Transaction sent with hash:", hash);
       setTransactionStatus("Transaction complete!");
 
-      try {
-        if (isAuthenticated && activeWallet?.address) {
-          if (
-            selectedToken &&
-            selectedToken.isNativeCurrency === false &&
-            selectedToken.contractAddress
-          ) {
-            const rawAmount = parseUnits(
-              amount,
-              selectedToken.decimals,
-            ).toString();
-            await createTransaction({
+      // Record the transfer with the backend — this is what triggers the
+      // recipient's "Transfer Received" push, so it goes through the
+      // persistent outbox rather than a one-shot call: if this wallet has
+      // no session right now, or the request fails, the record is kept and
+      // posted later (foreground / sign-in) instead of being lost. Never
+      // throws; the tx is already on chain.
+      if (activeWallet?.address) {
+        if (
+          selectedToken &&
+          selectedToken.isNativeCurrency === false &&
+          selectedToken.contractAddress
+        ) {
+          await recordTransfer({
+            fromAddress: activeWallet.address,
+            toAddress: recipient,
+            amount: parseUnits(amount, selectedToken.decimals).toString(),
+            txHash: hash,
+            token: {
               contractAddress: selectedToken.contractAddress,
               blockchainId: selectedToken.blockchainId,
-              type: "TRANSFER",
-              amount: rawAmount,
-              txHash: hash,
+            },
+          });
+        } else {
+          const nativeTokenId =
+            selectedToken?.id ?? tokenList?.find((t) => t.isNativeCurrency)?.id;
+          if (nativeTokenId) {
+            await recordTransfer({
               fromAddress: activeWallet.address,
               toAddress: recipient,
-            } as any);
-          } else {
-            const nativeTokenId =
-              selectedToken?.id ??
-              tokenList?.find((t) => t.isNativeCurrency)?.id;
-            if (nativeTokenId) {
-              const rawAmount = kit
-                .parseNativeAmount(amount, activeChain)
-                .toString();
-              await createTransaction({
-                tokenId: nativeTokenId,
-                type: "TRANSFER",
-                amount: rawAmount,
-                txHash: hash,
-                fromAddress: activeWallet.address,
-                toAddress: recipient,
-              });
-            }
+              amount: kit.parseNativeAmount(amount, activeChain).toString(),
+              txHash: hash,
+              token: { tokenId: nativeTokenId },
+            });
           }
         }
-      } catch (historyErr) {
-        console.warn("Failed to create transfer history:", historyErr);
       }
 
       console.log(
@@ -832,8 +843,20 @@ export default function SendScreen() {
           gasFeeAmount,
         },
       });
-    } catch (error: any) {
-      console.error("Send transaction error:", error);
+    } catch (error: unknown) {
+      // Raw detail stays in dev logs; the user gets fixed copy that never
+      // mentions gas / tokens / chains (services/errors/sendErrors.ts).
+      if (__DEV__) console.error("Send transaction error:", error);
+      const code = classifySendError(error);
+      if (code !== "user_cancelled") {
+        const copy = sendErrorCopy(
+          code,
+          selectedToken && selectedToken.isNativeCurrency === false
+            ? selectedToken.symbol
+            : nativeSymbol,
+        );
+        Alert.alert(copy.title, copy.message);
+      }
     } finally {
       setIsLoading(false);
     }

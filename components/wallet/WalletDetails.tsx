@@ -25,6 +25,7 @@ import type { TWallet } from "@/constants/types/walletTypes";
 import { useWallet } from "@/hooks/useWallet";
 import { chainCacheKey } from "@/hooks/useWallet.helpers";
 import { storage } from "@/lib/storage/mmkv";
+import { filterSupportedWallets } from "@/services/walletKit/chainSupport";
 import { walletKitRegistry } from "@/services/walletKit/registry";
 import { authenticateUser } from "@/utils/authUtils";
 import { copyToClipboard } from "@/utils/helperUtils";
@@ -80,7 +81,9 @@ export default function WalletDetails({
     if (typeof seedGroup !== "string" || seedGroup.length === 0) {
       return [wallet];
     }
-    const group = wallets.filter((w) => w.seedGroupId === seedGroup);
+    const group = filterSupportedWallets(
+      wallets.filter((w) => w.seedGroupId === seedGroup),
+    );
     return group.length > 0 ? group : [wallet];
   }, [wallet, wallets]);
 
@@ -336,6 +339,10 @@ export default function WalletDetails({
           </TouchableOpacity>
         ) : null}
 
+        {/* A passkey wallet has no seed phrase to put in Drive, by design:
+            the passkey itself is what the OS syncs, and the Passkey block
+            above already says so (Recovery row). Nothing extra here. */}
+
         {upgradeError ? (
           <View className="bg-light-primary-red/10 p-3 rounded-2xl mb-4">
             <Text className="text-light-primary-red text-xs font-semibold">
@@ -371,8 +378,8 @@ export default function WalletDetails({
                   </Text>
                 </View>
                 <Text className="text-light-matte-black/50 text-xs leading-4">
-                  Unlock gasless payments, atomic batching, and secure AI agent
-                  micropayments.
+                  Pay fees in USDC, batch actions atomically, and enable secure
+                  AI agent micropayments.
                 </Text>
               </View>
               <TouchableOpacity

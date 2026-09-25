@@ -29,6 +29,13 @@
  * Chain-extension discipline (memory `feedback_chain_extension_discipline.md`):
  * the deep-link is namespace-agnostic. `intentId` is all the receipt
  * needs — the intent carries its own chain discriminator.
+ *
+ * Registration reliability: a failed POST is retried in-process up to 3x
+ * (`postPushToken`), then `usePushRegistrationRetry` re-asserts on
+ * foreground, token rotation, and auth-state change. All of that lives in
+ * memory, so it only helps while the process stays alive — `retryState` is
+ * hydrated from and persisted to MMKV (`pushRegistrationState.ts`) so a
+ * failure survives the app being killed instead of being silently lost.
  */
 
 import { useQueryClient } from "@tanstack/react-query";
@@ -42,12 +49,18 @@ import { optionalAuthApi } from "@/constants/configs/ky";
 import { pointsQueryKeys } from "@/constants/queryKeys/pointsQueryKeys";
 import { redeemQueryKeys } from "@/constants/queryKeys/redeemQueryKeys";
 import { transactionsQueryKeys } from "@/constants/queryKeys/transactionsQueryKeys";
+import { subscribeAuthStateChanged } from "@/hooks/queries/useAuth";
 import {
   armPendingAgentPrompt,
   setAgentPrefillDirect,
 } from "@/hooks/useAgentPrefill";
 import { usePaymentIntentInvalidator } from "@/hooks/usePaymentIntentInvalidator";
 import { deepLinkNotices } from "@/services/deeplinks/notices";
+import {
+  type PushRegistrationState,
+  readPushRegistrationState,
+  writePushRegistrationState,
+} from "@/services/push/pushRegistrationState";
 import { walletConnectTransport } from "@/services/transports/walletconnect";
 
 /**
@@ -177,12 +190,96 @@ export async function registerAndroidTransfersChannel(): Promise<void> {
   }
 }
 
-// Tracks the last attempted wallet list so the foreground-retry hook can
-// re-use it without the call site needing to pass it again.
-const retryState = {
-  failed: false,
-  wallets: [] as string[],
-};
+// Tracks the last attempted wallet list so the healing hook can re-register
+// without the call site needing to pass it again, plus when registration
+// last succeeded (so a long-running process re-asserts itself daily).
+// Hydrated from MMKV at module load and persisted on every change
+// (`pushRegistrationState.ts`) — a failure survives a kill, so the next
+// launch (and `usePushRegistrationRetry` on mount, before `useWallet` even
+// finishes rehydrating) knows immediately that the last attempt didn't
+// land, instead of starting from a blank slate and waiting on a foreground
+// event to find out.
+const retryState: PushRegistrationState = readPushRegistrationState();
+
+function persistRetryState(): void {
+  writePushRegistrationState(retryState);
+}
+
+/**
+ * A registration older than this is re-sent on the next foreground even
+ * though nothing is known to have changed. Cheap (one idempotent POST) and
+ * it heals the states the server can't see from its side: a device row
+ * pruned after a stale-token receipt, a subscription lost to a racing
+ * registration, a process that has been alive across many days.
+ *
+ * `POST /users/me/push-token` answers 204 with no signal back to the
+ * client (`api/src/push/push.controller.ts`), so there is no way to be
+ * told "your device row got pruned" — the api prunes on `DeviceNotRegistered`
+ * from either the send ticket or the later receipt check
+ * (`api/src/push/push.service.ts` `attemptDelivery` / `checkReceipts`),
+ * silently. If that prune was a transient false-positive (a receipt read
+ * while the OS had merely paused the app) rather than a genuine token
+ * rotation, the underlying Expo token is still good and just needs
+ * re-sending — this window is how long that can go unrepaired. Kept short
+ * relative to the old 24h default specifically to shrink that exposure;
+ * still cheap because the POST is a no-op on the server when nothing
+ * changed.
+ */
+const REGISTRATION_STALE_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * Coalesces concurrent callers into one in-flight request. Several triggers
+ * (mount resume-on-failure, foreground, token listener, auth change) can
+ * fire within the same tick — without this each would start its own
+ * `getExpoPushTokenAsync` → POST round trip in parallel.
+ */
+let inFlightRegistration: Promise<boolean> | null = null;
+
+/**
+ * Hard floor between actual network attempts — unconditional, no bypass.
+ * At most one `POST /users/me/push-token` leaves the device per window,
+ * no matter how many times or why `registerForPushNotifications` gets
+ * called; a call inside the window is coalesced into a single trailing
+ * call scheduled for the moment the window reopens (using whichever
+ * wallet list was most recently requested), so nothing is silently
+ * dropped — it is delayed, at most by one window.
+ *
+ * This is deliberately unconditional (earlier versions of this gate only
+ * throttled when the wallet list matched and the last attempt hadn't
+ * failed, which meant any drift in either of those — a stuck `failed`
+ * flag, a wallet list that differs by casing between renders — fell
+ * straight through with no protection). A device hammering
+ * `POST /users/me/push-token` in a tight loop is a real production
+ * incident (real DB writes per `api`'s `registerToken`), so this must
+ * hold regardless of *why* something is calling it too often, including
+ * a future bug we haven't found yet.
+ */
+const MIN_REREGISTRATION_INTERVAL_MS = 30 * 1000;
+
+let lastAttemptStartedAt = 0;
+let pendingWallets: string[] | null = null;
+let pendingTimer: ReturnType<typeof setTimeout> | null = null;
+
+function sameWallets(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  const setB = new Set(b);
+  return a.every((w) => setB.has(w));
+}
+
+function scheduleTrailingRegistration(wallets: string[]): void {
+  pendingWallets = wallets;
+  if (pendingTimer) return; // already scheduled — it'll pick up the latest pendingWallets when it fires
+  const wait = Math.max(
+    0,
+    MIN_REREGISTRATION_INTERVAL_MS - (Date.now() - lastAttemptStartedAt),
+  );
+  pendingTimer = setTimeout(() => {
+    pendingTimer = null;
+    const wallets = pendingWallets;
+    pendingWallets = null;
+    if (wallets) void registerForPushNotifications(wallets);
+  }, wait);
+}
 
 /**
  * Request push permission, obtain an Expo push token, and POST it to
@@ -190,8 +287,42 @@ const retryState = {
  * Returns true on success, false on any unrecoverable failure (so callers
  * can decide whether to retry). Fails-closed on every branch so the app
  * always keeps working without push.
+ *
+ * Rate-limited to at most one actual attempt per
+ * `MIN_REREGISTRATION_INTERVAL_MS` (see above) — a call arriving sooner
+ * resolves immediately without hitting the network, and its wallet list
+ * is what gets sent by the trailing call once the window reopens.
  */
-export async function registerForPushNotifications(
+export function registerForPushNotifications(
+  wallets: string[],
+): Promise<boolean> {
+  if (inFlightRegistration) {
+    scheduleTrailingRegistration(wallets);
+    return inFlightRegistration;
+  }
+
+  const sinceLastAttempt = Date.now() - lastAttemptStartedAt;
+  if (
+    lastAttemptStartedAt > 0 &&
+    sinceLastAttempt < MIN_REREGISTRATION_INTERVAL_MS
+  ) {
+    if (__DEV__) {
+      console.log(
+        `[push] throttled — last attempt ${sinceLastAttempt}ms ago, will retry with latest wallets in ${MIN_REREGISTRATION_INTERVAL_MS - sinceLastAttempt}ms`,
+      );
+    }
+    scheduleTrailingRegistration(wallets);
+    return Promise.resolve(!retryState.failed);
+  }
+
+  lastAttemptStartedAt = Date.now();
+  inFlightRegistration = doRegisterForPushNotifications(wallets).finally(() => {
+    inFlightRegistration = null;
+  });
+  return inFlightRegistration;
+}
+
+async function doRegisterForPushNotifications(
   wallets: string[],
 ): Promise<boolean> {
   await registerAndroidPayoutChannel();
@@ -202,8 +333,14 @@ export async function registerForPushNotifications(
 
   if (Constants.executionEnvironment === ExecutionEnvironment.StoreClient) {
     console.log("[push] skipping registration in Expo Go");
+    retryState.failed = false;
+    retryState.consecutiveFailures = 0;
+    retryState.lastSuccessAt = Date.now();
+    persistRetryState();
     return true; // not a failure — expected environment
   }
+
+  retryState.lastAttemptAt = Date.now();
 
   try {
     const existing = await Notifications.getPermissionsAsync();
@@ -215,6 +352,11 @@ export async function registerForPushNotifications(
     if (status !== "granted") {
       console.log("[push] permission not granted — not retrying");
       retryState.failed = false; // permission denied is not a transient failure
+      retryState.consecutiveFailures = 0;
+      // Counts as handled: the daily refresh must not turn into a daily
+      // permission prompt for someone who said no.
+      retryState.lastSuccessAt = Date.now();
+      persistRetryState();
       return true;
     }
 
@@ -222,6 +364,11 @@ export async function registerForPushNotifications(
     const token = tokenRes.data;
     if (!token) {
       console.warn("[push] getExpoPushTokenAsync returned empty");
+      retryState.failed = true;
+      retryState.wallets = wallets;
+      retryState.consecutiveFailures += 1;
+      retryState.lastError = "empty push token";
+      persistRetryState();
       return false;
     }
 
@@ -231,36 +378,124 @@ export async function registerForPushNotifications(
       );
     }
 
+    // Nothing to tell the backend: this exact token is already registered
+    // for this exact wallet list, the last attempt succeeded, and that
+    // success isn't stale. This is the common case — every cold start and
+    // every foreground land here once steady state is reached — so it
+    // must never cost a `POST /users/me/push-token` / DB write.
+    const alreadyCurrent =
+      token === retryState.lastRegisteredToken &&
+      sameWallets(wallets, retryState.wallets) &&
+      !retryState.failed &&
+      Date.now() - retryState.lastSuccessAt < REGISTRATION_STALE_MS;
+    if (alreadyCurrent) {
+      if (__DEV__) {
+        console.log(
+          "[push] already registered — nothing changed, skipping POST",
+        );
+      }
+      persistRetryState(); // lastAttemptAt moves forward even on a no-op check
+      return true;
+    }
+
     const ok = await postPushToken(token, wallets);
     retryState.failed = !ok;
     retryState.wallets = wallets;
+    if (ok) {
+      retryState.lastSuccessAt = Date.now();
+      retryState.consecutiveFailures = 0;
+      retryState.lastError = undefined;
+      retryState.lastRegisteredToken = token;
+    } else {
+      retryState.consecutiveFailures += 1;
+      retryState.lastError = "backend post failed after retries";
+    }
+    persistRetryState();
     return ok;
   } catch (err) {
     console.warn("[push] registerForPushNotifications threw:", err);
     retryState.failed = true;
     retryState.wallets = wallets;
+    retryState.consecutiveFailures += 1;
+    retryState.lastError = err instanceof Error ? err.message : String(err);
+    persistRetryState();
     return false;
   }
 }
 
+/** Diagnostic snapshot of the persisted retry state (e.g. for a debug screen). */
+export function pushRegistrationDiagnostics(): Readonly<PushRegistrationState> {
+  return { ...retryState };
+}
+
 /**
- * Mount once at the app root. When the app comes back to the foreground
- * and the last registration attempt failed (e.g. was offline), retries
- * automatically — no user action required.
+ * Mount once at the app root. Keeps the server's picture of this device
+ * correct without the user doing anything:
+ *
+ *   - foreground: retry a failed registration (was offline), or refresh
+ *     one older than a day;
+ *   - push-token rotation (FCM/APNs hand out a new token without a cold
+ *     start): re-register immediately — the server prunes the old token
+ *     the first time a push to it bounces, so until this fires the device
+ *     would silently receive nothing;
+ *   - auth-state change (sign-in / wallet switch that changes the
+ *     session): re-register so the server links the device to the wallet
+ *     that is now signed in, which is what its user-based fallback route
+ *     for pushes keys off.
+ *   - mount, when the persisted state (`pushRegistrationState.ts`) shows
+ *     the last attempt failed: this can be a fresh process that never
+ *     got the chance to retry before being killed, so don't wait for a
+ *     foreground event or for `useWallet` to rehydrate and re-trigger the
+ *     boot effect in `app/_layout.tsx` — retry with the last-known wallet
+ *     list right away.
  */
 export function usePushRegistrationRetry(): void {
   useEffect(() => {
-    const sub = AppState.addEventListener("change", (nextState) => {
-      if (
-        nextState === "active" &&
-        retryState.failed &&
-        retryState.wallets.length > 0
-      ) {
-        console.log("[push] retrying registration on foreground");
-        void registerForPushNotifications(retryState.wallets);
-      }
+    const reregister = (why: string) => {
+      if (retryState.wallets.length === 0) return;
+      console.log(`[push] re-registering (${why})`);
+      void registerForPushNotifications(retryState.wallets);
+    };
+
+    if (retryState.failed) reregister("resuming after previous failure");
+
+    const appState = AppState.addEventListener("change", (nextState) => {
+      if (nextState !== "active") return;
+      if (retryState.failed) reregister("retry after failure");
+      else if (Date.now() - retryState.lastSuccessAt > REGISTRATION_STALE_MS)
+        reregister("registration stale");
     });
-    return () => sub.remove();
+
+    let tokenSub: { remove: () => void } | undefined;
+    try {
+      // `token.data` is the raw device token this event carries. Expo's own
+      // docs warn that calling `getDevicePushTokenAsync` (which
+      // `registerForPushNotifications` does, via `getExpoPushTokenAsync`)
+      // FROM a reaction to this listener "may lead to an infinite loop" —
+      // in practice the native side re-emits this event on every fetch,
+      // not only on a genuine change. Compare against the last value we
+      // actually saw and ignore a re-emit of the same one; only a real
+      // change is a rotation worth re-registering for.
+      let lastDeviceToken: string | null = null;
+      tokenSub = Notifications.addPushTokenListener((token) => {
+        const value = JSON.stringify(token?.data ?? null);
+        if (value === lastDeviceToken) return;
+        lastDeviceToken = value;
+        reregister("push token rotated");
+      });
+    } catch (err) {
+      console.warn("[push] addPushTokenListener unavailable:", err);
+    }
+
+    const unsubscribeAuth = subscribeAuthStateChanged(() =>
+      reregister("auth state changed"),
+    );
+
+    return () => {
+      appState.remove();
+      tokenSub?.remove();
+      unsubscribeAuth();
+    };
   }, []);
 }
 
@@ -317,6 +552,13 @@ async function postPushToken(
 /** Shape of the `data` payload we expect from server-sent PAID_OUT pushes. */
 interface PayoutPushData {
   intentId?: string;
+  /**
+   * The payer's Activity row for this payment. When present, a tap lands
+   * there — a tapped push is a look-up, not the end of a pay flow, so the
+   * durable record with back → Activity is the right destination. Older
+   * api responses omit it and fall back to the receipt.
+   */
+  transactionId?: string;
   // Display fields (safe to show in banner / log); the server never
   // includes signature / nonce / Circle internals per §6.3.
   merchantDisplayName?: string;
@@ -335,6 +577,8 @@ function readPayoutData(
   }
   return {
     intentId: data.intentId,
+    transactionId:
+      typeof data.transactionId === "string" ? data.transactionId : undefined,
     merchantDisplayName:
       typeof data.merchantDisplayName === "string"
         ? data.merchantDisplayName
@@ -353,6 +597,23 @@ interface PointsPushData {
   type: "point_deposit" | "redemption";
   pointTransactionId?: string;
   redemptionId?: string;
+}
+
+/**
+ * `data` of a product-purchase push (payment verified / preparing /
+ * delivered / delayed / refunded — see api `sendFulfilmentPush` and
+ * `sendPurchaseOutcomePush`). Every one of them deep-links to the order.
+ */
+function readPurchasePushData(
+  notification: Notifications.Notification,
+): { purchaseId: string } | null {
+  const raw = notification.request.content.data;
+  if (!raw || typeof raw !== "object") return null;
+  const data = raw as Record<string, unknown>;
+  if (data.type !== "purchase" || typeof data.purchaseId !== "string") {
+    return null;
+  }
+  return { purchaseId: data.purchaseId };
 }
 
 function readPointsPushData(
@@ -450,6 +711,31 @@ interface TransferPushData {
   transactionId?: string;
 }
 
+/**
+ * A merchant-payment outcome that is NOT a successful settlement
+ * ("we're checking" / "didn't go through"). The api deliberately omits
+ * `intentId` on these — the receipt screen is for paid intents — and
+ * points at the Activity row instead.
+ */
+interface MerchantPaymentPushData {
+  status?: string;
+  transactionId?: string;
+}
+
+function readMerchantPaymentPushData(
+  notification: Notifications.Notification,
+): MerchantPaymentPushData | null {
+  const raw = notification.request.content.data;
+  if (!raw || typeof raw !== "object") return null;
+  const data = raw as Record<string, unknown>;
+  if (data.type !== "merchant_payment") return null;
+  return {
+    status: typeof data.status === "string" ? data.status : undefined,
+    transactionId:
+      typeof data.transactionId === "string" ? data.transactionId : undefined,
+  };
+}
+
 function readTransferPushData(
   notification: Notifications.Notification,
 ): TransferPushData | null {
@@ -483,6 +769,18 @@ export function usePushNotificationHandler(): void {
         const payoutData = readPayoutData(notification);
         if (payoutData?.intentId) {
           invalidateIntent(payoutData.intentId);
+          // The Activity row for this payment just changed status
+          // (Confirming → Paid); refresh the list and any open detail.
+          queryClient.invalidateQueries({
+            queryKey: transactionsQueryKeys.all,
+          });
+          return;
+        }
+
+        if (readMerchantPaymentPushData(notification)) {
+          queryClient.invalidateQueries({
+            queryKey: transactionsQueryKeys.all,
+          });
           return;
         }
 
@@ -515,6 +813,19 @@ export function usePushNotificationHandler(): void {
       (response) => {
         const data = readPayoutData(response.notification);
         if (!data?.intentId) {
+          const purchaseData = readPurchasePushData(response.notification);
+          if (purchaseData) {
+            try {
+              router.push({
+                pathname: "/activity-detail" as never,
+                params: { purchaseId: purchaseData.purchaseId },
+              });
+            } catch (err) {
+              console.warn("[push] activity-detail route not available:", err);
+            }
+            return;
+          }
+
           const pointsData = readPointsPushData(response.notification);
           if (pointsData) {
             if (pointsData.type === "redemption" && pointsData.redemptionId) {
@@ -562,6 +873,25 @@ export function usePushNotificationHandler(): void {
             return;
           }
 
+          const merchantPayment = readMerchantPaymentPushData(
+            response.notification,
+          );
+          if (merchantPayment) {
+            try {
+              router.push(
+                merchantPayment.transactionId
+                  ? {
+                      pathname: "/activity-detail" as never,
+                      params: { paymentId: merchantPayment.transactionId },
+                    }
+                  : ("/activities" as never),
+              );
+            } catch (err) {
+              console.warn("[push] activity route not available:", err);
+            }
+            return;
+          }
+
           const transferData = readTransferPushData(response.notification);
           if (transferData?.transactionId) {
             try {
@@ -580,6 +910,20 @@ export function usePushNotificationHandler(): void {
             void resumeDappRequest(dappRequest);
           }
           return;
+        }
+        if (data.transactionId) {
+          try {
+            router.push({
+              pathname: "/activity-detail" as never,
+              params: { paymentId: data.transactionId },
+            });
+            return;
+          } catch (err) {
+            console.warn(
+              "[push] activity-detail route not available, falling back to receipt:",
+              err,
+            );
+          }
         }
         try {
           router.push({

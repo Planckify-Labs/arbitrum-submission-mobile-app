@@ -80,6 +80,9 @@ export default defineConfig({
       "services/chains/sui/transferService.test.ts",
       "services/nanopay/solana/__tests__/*.test.ts",
       "services/nanopay/pathOnchainSettlement.test.ts",
+      "services/nanopay/settlementAmount.test.ts",
+      "services/nanopay/preflight.test.ts",
+      "services/errors/paymentErrors.test.ts",
       // Sui Intent Engine (Sui Overflow 2026 Phase 1)
       "services/chains/sui/intent/intentSchema.test.ts",
       "services/chains/sui/intent/intentStore.test.ts",
@@ -199,6 +202,8 @@ export default defineConfig({
       // vcGamer PLN voucher_code parsing: unit-suffix-less / comma-decimal
       // variants are what silently hid the Token Code card on real orders.
       "utils/vcGamerUtils.test.ts",
+      // Fulfilment leg copy (paid → preparing → delivered / refunded).
+      "utils/fulfilmentUtils.test.ts",
       // dApps-browser address bar: what the user types decides the origin
       // the bridge grants permissions against, so the scheme allowlist and
       // the userinfo/zero-width stripping are covered here rather than
@@ -220,6 +225,12 @@ export default defineConfig({
       "services/backup/passphrasePolicy.test.ts",
       // App PIN store: hashed at rest, legacy plaintext migrated once.
       "services/security/pinStore.test.ts",
+      // Transfer-record outbox: the recipient's push hangs off this POST,
+      // so a lapsed session or a dropped request must defer it, never lose it.
+      "services/transfers/transferRecordOutbox.test.ts",
+      // Push-token registration retry state: persisted so a failed
+      // registration survives the app being killed mid-retry.
+      "services/push/pushRegistrationState.test.ts",
     ],
   },
 });

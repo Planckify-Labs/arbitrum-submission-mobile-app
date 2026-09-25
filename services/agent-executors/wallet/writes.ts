@@ -17,12 +17,12 @@
  */
 
 import { type Abi, erc20Abi, parseUnits } from "viem";
-import { tokenApi } from "@/api/endpoints/tokens";
-import { transactionApi } from "@/api/endpoints/transactions";
 import type { ChainConfig } from "@/constants/configs/chainConfig";
 import { getPreferredGasToken } from "@/hooks/usePreferredGasToken";
+import { fixedErc20TransferGasLimit } from "@/services/chains/evm/monad";
 import { pollRelayerTaskHash } from "@/services/gasAbstraction/pollTaskStatus";
 import { resolveGasPayment } from "@/services/gasAbstraction/resolveGasPayment";
+import { recordTransfer } from "@/services/transfers/transferRecordOutbox";
 import {
   requireWalletClient,
   resolveChainClients,
@@ -104,27 +104,21 @@ export const sendNativeToken: MobileToolExecutor = (input, context) =>
       chain: walletClient.chain,
     });
 
-    // Record transfer history — mirrors send.tsx native-token path.
-    // Failure here must NOT fail the executor; the tx is already on chain.
+    // Record transfer history — same durable outbox as send.tsx, so the
+    // recipient's push survives a lapsed session or a dropped request.
+    // Never throws and must NOT fail the executor; the tx is already on chain.
     let transactionId: string | undefined;
-    try {
-      const blockchain = context.blockchains.find(
-        (b) => b.chainId === chainId && b.isEVM,
-      );
-      const nativeToken = blockchain?.tokens?.find((t) => t.isNativeCurrency);
-      if (nativeToken?.id) {
-        const record = await transactionApi.createTransaction({
-          tokenId: nativeToken.id,
-          type: "TRANSFER",
-          amount: value.toString(),
-          txHash: hash,
-          fromAddress: context.wallet.address,
-          toAddress: to,
-        });
-        transactionId = record?.id;
-      }
-    } catch (histErr) {
-      console.warn("[sendNativeToken] failed to record history:", histErr);
+    const nativeToken = context.blockchains
+      .find((b) => b.chainId === chainId && b.isEVM)
+      ?.tokens?.find((t) => t.isNativeCurrency);
+    if (nativeToken?.id) {
+      transactionId = await recordTransfer({
+        fromAddress: context.wallet.address,
+        toAddress: to,
+        amount: value.toString(),
+        txHash: hash,
+        token: { tokenId: nativeToken.id },
+      });
     }
 
     return {
@@ -151,9 +145,9 @@ export const transferErc20: MobileToolExecutor = (input, context) =>
     const decimals =
       typeof input.token_decimals === "number" ? input.token_decimals : 18;
 
-    // Decide how gas is paid (USDC abstraction vs native) via the same
-    // single policy `app/send.tsx` uses. `getPreferredGasToken()` reads
-    // the persisted setting (this runs off the React tree).
+    // Decide how gas is paid (stablecoin abstraction vs native) via the
+    // same single policy `app/send.tsx` uses. `getPreferredGasToken()`
+    // reads the persisted setting (this runs off the React tree).
     const chain: ChainConfig = {
       namespace: "eip155",
       chain: resolveChainDef(chainId, context.blockchains),
@@ -165,9 +159,11 @@ export const transferErc20: MobileToolExecutor = (input, context) =>
       preferredGasToken: getPreferredGasToken(),
     });
 
-    // Prefer USDC, else block — don't silently fall back to native gas.
+    // Prefer the stablecoin, else block — don't silently fall back to
+    // native gas. Stable code only (curated copy lives in agentErrorCopy);
+    // the token in question is the user's gas-settings choice.
     if (gasPlan.mode === "blocked") {
-      return { status: "failed", error: "insufficient_usdc_for_gas" };
+      return { status: "failed", error: "insufficient_fee_token_for_gas" };
     }
 
     let hash: `0x${string}`;
@@ -177,6 +173,7 @@ export const transferErc20: MobileToolExecutor = (input, context) =>
           wallet: context.wallet,
           chain,
           intent: { to, tokenAddress, amount, decimals, memo: "takumi-agent" },
+          feeTokenSymbol: gasPlan.quote.feeToken.symbol,
         });
         hash = (await pollRelayerTaskHash(
           gasPlan.provider,
@@ -186,7 +183,7 @@ export const transferErc20: MobileToolExecutor = (input, context) =>
       } catch (relayErr) {
         if (__DEV__)
           console.warn("[transferErc20] abstracted failed:", relayErr);
-        return { status: "failed", error: "gasless_transfer_failed" };
+        return { status: "failed", error: "relayed_transfer_failed" };
       }
     } else {
       // Native gas path — unchanged viem writeContract.
@@ -198,6 +195,12 @@ export const transferErc20: MobileToolExecutor = (input, context) =>
           "wallet client has no account",
         );
       }
+      // Monad bills on gas_limit, not gas_used — same pinned limit as
+      // `EvmWalletKit.sendTokenTransfer` for the AUSD call shape.
+      const gas = fixedErc20TransferGasLimit({
+        chainId,
+        contractAddress: tokenAddress,
+      });
       hash = await walletClient.writeContract({
         account,
         chain: walletClient.chain,
@@ -205,38 +208,26 @@ export const transferErc20: MobileToolExecutor = (input, context) =>
         abi: erc20Abi,
         functionName: "transfer",
         args: [to, amount],
+        ...(gas !== undefined ? { gas } : {}),
       });
     }
 
-    // Record transfer history — mirrors send.tsx ERC20 path.
-    // Uses tokenApi.searchTokens to resolve tokenId from contractAddress +
-    // blockchainId, exactly as useCreateTransaction does in the hook.
-    // Failure must NOT fail the executor; the tx is already on chain.
+    // Record transfer history — same durable outbox as send.tsx. The
+    // outbox resolves the tokenId from contractAddress + blockchainId when
+    // it posts (public catalog lookup). Never throws; the tx is already on
+    // chain.
     let transactionId: string | undefined;
-    try {
-      const blockchain = context.blockchains.find(
-        (b) => b.chainId === chainId && b.isEVM,
-      );
-      if (blockchain) {
-        const tokens = await tokenApi.searchTokens({
-          contractAddress: tokenAddress,
-          blockchainId: blockchain.id,
-        });
-        const tokenId = tokens?.[0]?.id;
-        if (tokenId) {
-          const record = await transactionApi.createTransaction({
-            tokenId,
-            type: "TRANSFER",
-            amount: amount.toString(),
-            txHash: hash,
-            fromAddress: context.wallet.address,
-            toAddress: to,
-          });
-          transactionId = record?.id;
-        }
-      }
-    } catch (histErr) {
-      console.warn("[transferErc20] failed to record history:", histErr);
+    const blockchain = context.blockchains.find(
+      (b) => b.chainId === chainId && b.isEVM,
+    );
+    if (blockchain) {
+      transactionId = await recordTransfer({
+        fromAddress: context.wallet.address,
+        toAddress: to,
+        amount: amount.toString(),
+        txHash: hash,
+        token: { contractAddress: tokenAddress, blockchainId: blockchain.id },
+      });
     }
 
     return {
