@@ -10,8 +10,7 @@
       "distribution": "internal",
       "environment": "development",
       "env": {
-        "APP_VARIANT": "development",
-        "EXPO_PUBLIC_FF_PASSKEY_ONLY_ONBOARDING": "true"
+        "APP_VARIANT": "development"
       }
     },
     "preview": {
@@ -19,8 +18,7 @@
       "distribution": "internal",
       "environment": "preview",
       "env": {
-        "APP_VARIANT": "preview",
-        "EXPO_PUBLIC_FF_PASSKEY_ONLY_ONBOARDING": "true"
+        "APP_VARIANT": "preview"
       }
     },
     "production": {
@@ -28,9 +26,7 @@
       "autoIncrement": true,
       "environment": "production",
       "env": {
-        "APP_VARIANT": "production",
-        "EXPO_PUBLIC_FF_PASSKEY_ONLY_ONBOARDING": "false",
-        "EXPO_PUBLIC_FF_PASSKEY_ONBOARDING": "false"
+        "APP_VARIANT": "production"
       }
     }
   },

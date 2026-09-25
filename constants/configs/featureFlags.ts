@@ -145,19 +145,21 @@ export const FEATURE_EVM_ONCHAIN_SETTLEMENT_MAINNET = flag(
  *   - `FEATURE_PASSKEY_ONLY_ONBOARDING` additionally HIDES the
  *     Google / seed-phrase / private-key paths so the passkey is the
  *     entire account layer for the judged build (Mera bounty framing,
- *     strategy doc "What NOT to do"). Implies the first flag.
+ *     strategy doc "What NOT to do"). Implies the first flag. This also
+ *     drives the Monad-only chain lockdown (`services/walletKit/chainSupport.ts`)
+ *     for the hackathon build.
  *
- * On the `monad-hackathon` branch passkey-only is the DEFAULT, so a plain
- * `pnpm start` dev bundle shows the same login as the judged `.preview`
- * build without any `.env` setup. Set
- * `EXPO_PUBLIC_FF_PASSKEY_ONLY_ONBOARDING=false` to get the full login
- * back. Before merging to `main` flip this default back to `false`: the
- * Play Store production build must stay untouched (Mera is pre-1.0 and
- * Android PRF coverage is unverified).
+ * Default OFF on `main`: the passkey login and the Monad-only lockdown
+ * were built and judged on the `monad-hackathon` branch, but Mera is
+ * pre-1.0 and Android PRF coverage is unverified, so the Play Store
+ * build stays on the normal multi-chain / Google / seed-phrase / private-key
+ * login until the passkey path gets more testing. The code is intact;
+ * set `EXPO_PUBLIC_FF_PASSKEY_ONLY_ONBOARDING=true` locally to bring it
+ * back for testing.
  */
 export const FEATURE_PASSKEY_ONLY_ONBOARDING = flag(
   "EXPO_PUBLIC_FF_PASSKEY_ONLY_ONBOARDING",
-  true,
+  false,
 );
 export const FEATURE_PASSKEY_ONBOARDING =
   FEATURE_PASSKEY_ONLY_ONBOARDING ||
