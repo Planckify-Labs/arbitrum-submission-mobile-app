@@ -67,6 +67,28 @@ tokens" path; that is a category error. CCTP's only axis of extension is
 > This is a live instance of the "verify protocol specs from source"
 > rule: three independent secondary sources agreed with each other and
 > were all wrong.
+>
+> ---
+>
+> 🔄 **Superseded 2026-09-26.** The claim above is correct about
+> `TokenMessengerV2` and **no longer complete**. Circle has since shipped
+> **CCTP for non-USDC assets** (`/cctp/expanded-assets`), a separate
+> product built on the same Iris attestation service, and **EURC is a
+> pre-configured token on it**. It is a different entry contract
+> (`CrossChainTokenService`), a different fee model (native gas on the
+> source rather than deducted from the amount), a different approval
+> target (a per-token `TokenManager`) and a much smaller chain set (7 EVM
+> chains: Ethereum, Avalanche, OP, Arbitrum, Base, Polygon, Arc).
+>
+> So: **USDC and EURC are both bridgeable, through two different Circle
+> products.** They must be two adapters, never one branch. See
+> `docs/swap-capability-spec.md` §4.10 for the full comparison, verified
+> against `developers.circle.com` on 2026-09-26.
+>
+> Note also that **CCTP V1 is being deprecated**: it begins 2026-10-31
+> and completes 2026-12-01. **Sui and Noble are V1-only** as of this
+> writing (Sui = domain 8), so §10.7's Sui assumptions need revisiting
+> before the sunset.
 
 ### 2.1 We already have CCTP
 
