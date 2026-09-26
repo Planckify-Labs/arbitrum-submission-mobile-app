@@ -35,6 +35,7 @@ import {
   type TransactionObjectArgument,
 } from "@mysten/sui/transactions";
 import { parseUnits } from "viem";
+import { createSuiGrpcJsonRpcTransport } from "@/services/chains/sui/grpcTransport";
 import type { SuiNetwork } from "@/services/chains/sui/payloads";
 import { appendIntentReceipt } from "../appendIntentReceipt";
 import { resolveDeepbookPool } from "../deepbook.config";
@@ -101,7 +102,7 @@ async function loadDeepBook(
 ): Promise<{ db: DeepBookClient; coins: CoinMap; pools: PoolMap }> {
   const mod = await import("@mysten/deepbook-v3");
   const suiClient = new SuiJsonRpcClient({
-    url: chain.rpcUrl,
+    transport: createSuiGrpcJsonRpcTransport(chain.network),
     network: chain.network,
   });
   const db = new mod.DeepBookClient({
@@ -155,7 +156,7 @@ export const deepbookSwapVenue: SuiSwapVenue = {
 
       const bytes = await tx.build({
         client: new SuiJsonRpcClient({
-          url: params.chain.rpcUrl,
+          transport: createSuiGrpcJsonRpcTransport(params.chain.network),
           network: params.chain.network,
         }),
       });

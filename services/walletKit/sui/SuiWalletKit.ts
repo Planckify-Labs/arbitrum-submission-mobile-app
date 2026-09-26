@@ -30,6 +30,7 @@ import type { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
 import { Transaction } from "@mysten/sui/transactions";
 import { validateMnemonic } from "@scure/bip39";
 import { wordlist as englishWordlist } from "@scure/bip39/wordlists/english";
+import { createSuiGrpcJsonRpcTransport } from "@/services/chains/sui/grpcTransport";
 
 import type { ChainConfig } from "../../../constants/configs/chainConfig.ts";
 import type { TWallet } from "../../../constants/types/walletTypes.ts";
@@ -245,7 +246,7 @@ export function createSuiWalletKit(): WalletKitAdapter {
     ): Promise<bigint> {
       assertSui(chain);
       const client = new SuiJsonRpcClient({
-        url: chain.rpcUrl,
+        transport: createSuiGrpcJsonRpcTransport(chain.network),
         network: chain.network,
       });
       const { totalBalance } = await client.getBalance({ owner: address });
@@ -259,7 +260,7 @@ export function createSuiWalletKit(): WalletKitAdapter {
     ): Promise<bigint> {
       assertSui(chain);
       const client = new SuiJsonRpcClient({
-        url: chain.rpcUrl,
+        transport: createSuiGrpcJsonRpcTransport(chain.network),
         network: chain.network,
       });
       // Coin<T> is the standard route. If detection reveals a closed-loop
@@ -305,7 +306,7 @@ export function createSuiWalletKit(): WalletKitAdapter {
         throw new Error("No Sui signer for wallet");
       }
       const client = new SuiJsonRpcClient({
-        url: chain.rpcUrl,
+        transport: createSuiGrpcJsonRpcTransport(chain.network),
         network: chain.network,
       });
       try {
@@ -380,7 +381,7 @@ export function createSuiWalletKit(): WalletKitAdapter {
         throw new Error("No Sui signer for wallet");
       }
       const client = new SuiJsonRpcClient({
-        url: chain.rpcUrl,
+        transport: createSuiGrpcJsonRpcTransport(chain.network),
         network: chain.network,
       });
 
@@ -476,7 +477,7 @@ export function createSuiWalletKit(): WalletKitAdapter {
         throw new Error("No Sui signer for wallet");
       }
       const client = new SuiJsonRpcClient({
-        url: chain.rpcUrl,
+        transport: createSuiGrpcJsonRpcTransport(chain.network),
         network: chain.network,
       });
       // The pre-built PTB is the exact bytes the user previewed (SI-4) —

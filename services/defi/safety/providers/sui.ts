@@ -53,6 +53,7 @@ import type {
   ChainConfig,
   SuiChainConfig,
 } from "@/constants/configs/chainConfig";
+import { createSuiGrpcJsonRpcTransport } from "@/services/chains/sui/grpcTransport";
 import { decodeSuiPtb } from "@/services/chains/sui/intent/decodeSuiPtb";
 import { simulateSuiTransaction } from "@/services/chains/sui/simulation";
 import { BLUEFIN_CURRENT_PACKAGE } from "../../adapters/bluefin.config";
@@ -100,7 +101,10 @@ function suiChainFor(chainId: number | string): SuiChainConfig {
 
 function clientFor(chainId: number | string): SuiJsonRpcClient {
   const chain = suiChainFor(chainId);
-  return new SuiJsonRpcClient({ url: chain.rpcUrl, network: chain.network });
+  return new SuiJsonRpcClient({
+    transport: createSuiGrpcJsonRpcTransport(chain.network),
+    network: chain.network,
+  });
 }
 
 /**

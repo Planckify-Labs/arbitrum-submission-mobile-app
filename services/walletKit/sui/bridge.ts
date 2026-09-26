@@ -16,6 +16,7 @@ import { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
 import type { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
 import { Transaction } from "@mysten/sui/transactions";
 import type { ChainConfig } from "@/constants/configs/chainConfig";
+import { createSuiGrpcJsonRpcTransport } from "@/services/chains/sui/grpcTransport";
 import { getSuiSignerForWallet } from "@/services/walletService";
 import {
   type BridgeDestinationReadinessArgs,
@@ -77,7 +78,7 @@ export async function suiSubmitBridgeExecution({
   }
 
   const client = new SuiJsonRpcClient({
-    url: chain.rpcUrl,
+    transport: createSuiGrpcJsonRpcTransport(chain.network),
     network: chain.network,
   });
   const tx = Transaction.from(fromBase64(payload.payload));
@@ -110,7 +111,7 @@ export async function suiCheckBridgeDestinationReadiness({
   let balance: bigint;
   try {
     const client = new SuiJsonRpcClient({
-      url: chain.rpcUrl,
+      transport: createSuiGrpcJsonRpcTransport(chain.network),
       network: chain.network,
     });
     const res = await client.getBalance({

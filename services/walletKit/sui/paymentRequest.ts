@@ -25,6 +25,7 @@ import {
   suiPaymentKitRegistryIdFromName,
 } from "@/constants/configs/suiPaymentKit";
 import type { TWallet } from "@/constants/types/walletTypes";
+import { createSuiGrpcJsonRpcTransport } from "@/services/chains/sui/grpcTransport";
 import type { SuiSignTxPayload } from "@/services/chains/sui/payloads";
 import {
   DeepLinkBuildError,
@@ -100,7 +101,7 @@ export async function buildSuiPaymentRequest(args: {
   // `coinWithBalance` resolves the sender's coins at build time, which
   // needs a client on the bound chain.
   const client = new SuiJsonRpcClient({
-    url: chain.rpcUrl,
+    transport: createSuiGrpcJsonRpcTransport(chain.network),
     network: chain.network,
   });
   let bytes: Uint8Array;

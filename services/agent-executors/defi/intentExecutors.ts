@@ -17,6 +17,7 @@
 
 import { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
 import { track } from "@/services/analytics/posthog";
+import { createSuiGrpcJsonRpcTransport } from "@/services/chains/sui/grpcTransport";
 import { compileIntentToPtb } from "@/services/chains/sui/intent/compileIntentToPtb";
 import type { RiskFlag } from "@/services/chains/sui/intent/guardian/riskCheck";
 import { runGuardian } from "@/services/chains/sui/intent/guardian/riskCheckRegistry";
@@ -397,7 +398,7 @@ export const defiIntentPreview: MobileToolExecutor = (input, context) =>
     }
 
     const client = new SuiJsonRpcClient({
-      url: chain.rpcUrl,
+      transport: createSuiGrpcJsonRpcTransport(chain.network),
       network: chain.network,
     });
 
@@ -591,7 +592,7 @@ export const defiIntentExecute: MobileToolExecutor = (input, context) =>
 
     const chain = getActiveSuiChain();
     const client = new SuiJsonRpcClient({
-      url: chain.rpcUrl,
+      transport: createSuiGrpcJsonRpcTransport(chain.network),
       network: chain.network,
     });
     // Re-guard via dry-run (§5.3): refuse a now-reverting intent before signing.

@@ -12,6 +12,7 @@
  */
 
 import { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
+import { createSuiGrpcJsonRpcTransport } from "@/services/chains/sui/grpcTransport";
 import { formatRiskCopy } from "../copy";
 import type {
   RiskCheck,
@@ -38,7 +39,7 @@ export const liveInputBalanceReader: InputBalanceReader = async (args) => {
     const rpc =
       client ??
       new SuiJsonRpcClient({
-        url: ctx.chain.rpcUrl,
+        transport: createSuiGrpcJsonRpcTransport(ctx.chain.network),
         network: ctx.chain.network,
       });
     const { totalBalance } = await rpc.getBalance({

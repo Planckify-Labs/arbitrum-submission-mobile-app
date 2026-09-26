@@ -26,6 +26,7 @@ import type { TToken } from "@/api/types/token";
 import type { ChainConfig } from "@/constants/configs/chainConfig";
 import { resolveNamespace } from "@/hooks/useWallet.helpers";
 import { storage } from "@/lib/storage/mmkv";
+import { createSuiGrpcJsonRpcTransport } from "@/services/chains/sui/grpcTransport";
 import { walletKitRegistry } from "@/services/walletKit/registry";
 import {
   type BalanceGroup,
@@ -419,7 +420,7 @@ export const getSuiWalletTokens: MobileToolExecutor = (input, context) =>
     if (includeBalance) {
       try {
         const client = new SuiJsonRpcClient({
-          url: chain.rpcUrl,
+          transport: createSuiGrpcJsonRpcTransport(chain.network),
           network: chain.network,
         });
         const all = await client.getAllBalances({ owner: walletAddress });

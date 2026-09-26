@@ -14,6 +14,7 @@
  */
 
 import { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
+import { createSuiGrpcJsonRpcTransport } from "@/services/chains/sui/grpcTransport";
 import { formatRiskCopy } from "../copy";
 import type { RiskCheck, RiskCheckArgs, RiskFlag } from "../riskCheck";
 
@@ -47,7 +48,7 @@ export const livePoolFreshnessReader: PoolFreshnessReader = async (args) => {
     const client =
       shared ??
       new SuiJsonRpcClient({
-        url: ctx.chain.rpcUrl,
+        transport: createSuiGrpcJsonRpcTransport(ctx.chain.network),
         network: ctx.chain.network,
       });
     const obj = await client.getObject({

@@ -35,6 +35,7 @@ import {
   getSuiMainnetChain,
   type SuiChainConfig,
 } from "@/constants/configs/chainConfig";
+import { createSuiGrpcJsonRpcTransport } from "@/services/chains/sui/grpcTransport";
 import { SuiSwapError } from "@/services/swap/sui/types";
 import { classifySuiMoveError, DefiError } from "../errors/defiErrors";
 import type {
@@ -62,7 +63,10 @@ function devWarn(scope: string, err: unknown): void {
 }
 
 function suiClientFor(chain: SuiChainConfig): SuiJsonRpcClient {
-  return new SuiJsonRpcClient({ url: chain.rpcUrl, network: chain.network });
+  return new SuiJsonRpcClient({
+    transport: createSuiGrpcJsonRpcTransport(chain.network),
+    network: chain.network,
+  });
 }
 
 /** Native SUI in any address form (`0x2::sui::SUI` or zero-padded). */
