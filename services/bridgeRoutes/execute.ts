@@ -36,7 +36,11 @@ export class BridgeExecutionError extends Error {
     | "quote_stale"
     | "unsupported_chain"
     | "wallet_cannot_execute"
-    | "submission_failed";
+    | "submission_failed"
+    // The signed payload disagrees with the quote the user approved. A
+    // security stop, not a transient: re-sending the same call cannot help.
+    | "payload_mismatch"
+    | "insufficient_funds";
   constructor(code: BridgeExecutionError["code"]) {
     super(code);
     this.code = code;
@@ -53,9 +57,10 @@ export class BridgeExecutionError extends Error {
 export function isQuoteExpired(
   quote: TBridgeQuote,
   now: number = Date.now(),
+  skewAllowanceMs: number = 15_000,
 ): boolean {
   const expiry = new Date(quote.expiresAt).getTime();
-  return Number.isFinite(expiry) && expiry <= now;
+  return Number.isFinite(expiry) && expiry + skewAllowanceMs <= now;
 }
 
 /**
@@ -70,6 +75,13 @@ export async function executeBridgeQuote(
   ctx: BridgeExecContext,
 ): Promise<BridgeSubmission> {
   if (isQuoteExpired(quote)) {
+    if (typeof __DEV__ !== "undefined" && __DEV__) {
+      console.warn("[bridgeRoutes/execute] executeBridgeQuote: quote expired", {
+        expiresAt: quote.expiresAt,
+        nowIso: new Date().toISOString(),
+        diffMs: Date.now() - new Date(quote.expiresAt).getTime(),
+      });
+    }
     throw new BridgeExecutionError("quote_stale");
   }
 
@@ -80,6 +92,11 @@ export async function executeBridgeQuote(
   // Presence check, not a namespace branch: a chain whose kit has not
   // docked the capability simply cannot bridge yet.
   if (!kit?.submitBridgeExecution) {
+    if (typeof __DEV__ !== "undefined" && __DEV__) {
+      console.warn(
+        `[bridgeRoutes/execute] chain kit ${ctx.chain.namespace} does not dock submitBridgeExecution`,
+      );
+    }
     throw new BridgeExecutionError("unsupported_chain");
   }
 
@@ -91,8 +108,11 @@ export async function executeBridgeQuote(
       payload: quote.execution as BridgeExecutionPayload,
     });
   } catch (err) {
-    if (__DEV__) {
-      console.warn("[bridgeRoutes/execute] submission failed", err);
+    if (typeof __DEV__ !== "undefined" && __DEV__) {
+      console.error(
+        "[bridgeRoutes/execute] submission failed with error:",
+        err,
+      );
     }
     const name = (err as { name?: string } | null)?.name;
     if (name === "BridgePayloadUnsupportedError") {
@@ -139,7 +159,7 @@ export async function checkBridgeDestinationReadiness(
       assetCaip19: req.toAsset,
     });
   } catch (err) {
-    if (__DEV__) {
+    if (typeof __DEV__ !== "undefined" && __DEV__) {
       console.warn("[bridgeRoutes/readiness] check failed", err);
     }
     return [];

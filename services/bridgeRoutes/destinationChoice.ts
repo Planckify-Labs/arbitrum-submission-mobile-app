@@ -78,7 +78,7 @@ function emit(): void {
       listener();
     } catch (err) {
       // One broken subscriber must not stop the rest from being notified.
-      if (__DEV__) {
+      if (typeof __DEV__ !== "undefined" && __DEV__) {
         console.warn(`[destinationChoice] listener threw: ${String(err)}`);
       }
     }

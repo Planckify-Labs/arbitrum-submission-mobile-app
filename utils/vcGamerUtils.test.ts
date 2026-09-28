@@ -12,9 +12,7 @@ import { extractVoucher, isPLNVoucher } from "./vcGamerUtils";
 describe("isPLNVoucher", () => {
   it("detects the documented format with unit suffixes", () => {
     expect(
-      isPLNVoucher(
-        "2174-8986-6628-2450-0152/NURMULIANI-MTMN/R1/450VA/43.9KWH",
-      ),
+      isPLNVoucher("2174-8986-6628-2450-0152/NURMULIANI-MTMN/R1/450VA/43.9KWH"),
     ).toBe(true);
   });
 

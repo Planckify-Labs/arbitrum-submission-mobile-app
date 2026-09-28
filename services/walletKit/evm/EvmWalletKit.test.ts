@@ -25,13 +25,14 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import * as smartAccountsKit from "@metamask/smart-accounts-kit";
-import { formatUnits, isAddress, parseUnits } from "viem";
+import { defineChain, formatUnits, isAddress, parseUnits } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { mainnet } from "viem/chains";
 import type { TBlockchain } from "../../../api/types/blockchain.ts";
 import type { ChainConfig } from "../../../constants/configs/chainConfig.ts";
 import * as clients from "../../../utils/clients.ts";
 import { truncateAddress as truncateAddressUtil } from "../../../utils/walletUtils.ts";
+import { isArcChain } from "./bridge.ts";
 import { createEvmWalletKit } from "./EvmWalletKit.ts";
 
 const setGlobalMockPublicClient = (clients as any).setGlobalMockPublicClient;
@@ -409,5 +410,145 @@ describe("EvmWalletKit — chain-agnostic capabilities", () => {
       ),
       false,
     );
+  });
+});
+
+describe("EvmWalletKit — checkBridgeDestinationReadiness & isArcChain (§10.1)", () => {
+  const kit = createEvmWalletKit();
+
+  const arcTestnetChain: ChainConfig = {
+    namespace: "eip155",
+    chain: defineChain({
+      id: 5042002,
+      name: "Arc Testnet",
+      nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 18 },
+      rpcUrls: { default: { http: ["https://rpc.testnet.arc.network"] } },
+    }),
+  };
+
+  const arcMainnetChain: ChainConfig = {
+    namespace: "eip155",
+    chain: defineChain({
+      id: 5042,
+      name: "Arc",
+      nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 18 },
+      rpcUrls: { default: { http: ["https://rpc.arc.network"] } },
+    }),
+  };
+
+  it("isArcChain identifies Arc testnet and mainnet, and rejects non-Arc chains", () => {
+    assert.equal(isArcChain(arcTestnetChain), true);
+    assert.equal(isArcChain(arcMainnetChain), true);
+    assert.equal(isArcChain(ethereumChain), false);
+    assert.equal(isArcChain(solanaChain), false);
+  });
+
+  it("isArcChain returns true for custom chains with USDC nativeCurrency or Arc name", () => {
+    const customArcByName: ChainConfig = {
+      namespace: "eip155",
+      chain: defineChain({
+        id: 99999,
+        name: "Arc Staging",
+        nativeCurrency: { name: "Custom", symbol: "CST", decimals: 18 },
+        rpcUrls: { default: { http: ["https://example.com"] } },
+      }),
+    };
+    assert.equal(isArcChain(customArcByName), true);
+
+    const customArcBySymbol: ChainConfig = {
+      namespace: "eip155",
+      chain: defineChain({
+        id: 88888,
+        name: "Some Chain",
+        nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 18 },
+        rpcUrls: { default: { http: ["https://example.com"] } },
+      }),
+    };
+    assert.equal(isArcChain(customArcBySymbol), true);
+  });
+
+  it("returns no blockers on Arc testnet even when address has zero gas", async () => {
+    const blockers = await kit.checkBridgeDestinationReadiness!({
+      chain: arcTestnetChain,
+      address: VALID_ADDRESS,
+      contractAddress: "0x3600000000000000000000000000000000000000",
+    });
+    assert.deepEqual(blockers, []);
+  });
+
+  it("returns no blockers on Arc mainnet even when address has zero gas", async () => {
+    const blockers = await kit.checkBridgeDestinationReadiness!({
+      chain: arcMainnetChain,
+      address: VALID_ADDRESS,
+      contractAddress: "0x3600000000000000000000000000000000000000",
+    });
+    assert.deepEqual(blockers, []);
+  });
+
+  it("returns no blockers for native asset bridging (contractAddress null)", async () => {
+    const blockers = await kit.checkBridgeDestinationReadiness!({
+      chain: ethereumChain,
+      address: VALID_ADDRESS,
+      contractAddress: null,
+    });
+    assert.deepEqual(blockers, []);
+  });
+
+  it("returns warning blocker when bridging ERC-20 to non-Arc chain with zero gas balance", async () => {
+    const mockPublicClient = {
+      getBalance: async () => 0n,
+    };
+    setGlobalMockPublicClient(mockPublicClient);
+
+    const blockers = await kit.checkBridgeDestinationReadiness!({
+      chain: ethereumChain,
+      address: VALID_ADDRESS,
+      contractAddress: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    });
+
+    assert.equal(blockers.length, 1);
+    assert.equal(blockers[0].code, "no_destination_gas");
+    assert.equal(blockers[0].severity, "warning");
+    assert.match(blockers[0].message, /You have no ETH on Ethereum/);
+    assert.deepEqual(blockers[0].remedy, {
+      kind: "gas_top_up",
+      suggestedUsd: 2,
+    });
+
+    setGlobalMockPublicClient(null);
+  });
+
+  it("returns no blockers when bridging ERC-20 to non-Arc chain with sufficient gas balance", async () => {
+    const mockPublicClient = {
+      getBalance: async () => 500_000_000_000_000n, // > 0.0002 ETH
+    };
+    setGlobalMockPublicClient(mockPublicClient);
+
+    const blockers = await kit.checkBridgeDestinationReadiness!({
+      chain: ethereumChain,
+      address: VALID_ADDRESS,
+      contractAddress: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    });
+
+    assert.deepEqual(blockers, []);
+    setGlobalMockPublicClient(null);
+  });
+
+  it("fails open (returns []) if getBalance throws", async () => {
+    const mockPublicClient = {
+      getBalance: async () => {
+        throw new Error("RPC error");
+      },
+    };
+    setGlobalMockPublicClient(mockPublicClient);
+
+    const blockers = await kit.checkBridgeDestinationReadiness!({
+      chain: ethereumChain,
+      address: VALID_ADDRESS,
+      contractAddress: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    });
+
+    assert.deepEqual(blockers, []);
+    setGlobalMockPublicClient(null);
   });
 });

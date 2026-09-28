@@ -101,6 +101,7 @@ export const EXPECTED_MOBILE_TOOLS: ReadonlyArray<string> = [
   "bridge_quote",
   "bridge_execute",
   "bridge_status",
+  "bridge_claim",
   // agent-initiated x402 micropayments (spec Phase 5 §5.5)
   "x402_fetch",
 ];
@@ -173,6 +174,10 @@ export const MOBILE_WRITE_TOOLS: ReadonlySet<string> = new Set<string>([
   "defi_intent_execute",
   // bridge write — moves value cross-chain, irreversible mid-flight
   "bridge_execute",
+  // bridge write — the user's own destination wallet signs the Stellar
+  // `mint_and_forward` that completes a CCTP transfer into Stellar
+  // (no Circle Forwarding Service there). Spends destination gas.
+  "bridge_claim",
   // agent-initiated x402 micropayment (spends within a pre-signed allowance)
   "x402_fetch",
 ]);

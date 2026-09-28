@@ -79,6 +79,11 @@ export interface SorobanRpcClient {
   simulateTransaction(txXdrBase64: string): Promise<SimulateResult>;
   sendTransaction(txXdrBase64: string): Promise<SendTransactionResult>;
   getTransaction(hash: string): Promise<GetTransactionResult>;
+  /**
+   * The newest ledger the RPC has seen. Needed wherever a Soroban call
+   * takes an absolute expiry ledger, e.g. a SEP-41 `approve`.
+   */
+  getLatestLedger(): Promise<{ sequence: number }>;
 }
 
 interface JsonRpcEnvelope<T> {
@@ -206,6 +211,14 @@ export function getSorobanRpcClient(
     },
     async getTransaction(hash: string): Promise<GetTransactionResult> {
       return rpcCall<GetTransactionResult>(rpcUrl, "getTransaction", { hash });
+    },
+    async getLatestLedger(): Promise<{ sequence: number }> {
+      const raw = await rpcCall<{ sequence: number }>(
+        rpcUrl,
+        "getLatestLedger",
+        {},
+      );
+      return { sequence: raw.sequence };
     },
   };
 }

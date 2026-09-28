@@ -143,6 +143,41 @@ export type TBridgeExecutionPayload =
       contractId: string;
       method: string;
       argsXdrBase64: string[];
+      /**
+       * SEP-41 allowance to grant first. Stellar's CCTP
+       * `TokenMessengerMinter` pulls a Stellar-source burn with
+       * `transfer_from`, so the burn needs `approve` on the USDC contract.
+       */
+      approval?: { token: string; spender: string; amountRaw: string };
+    }
+  | {
+      /**
+       * A Circle bridge the DEVICE runs through Arc App Kit's own
+       * `bridge()` with the user's signer. Parameters, never calldata:
+       * App Kit builds the approve and burn against Circle's pinned
+       * contracts, and the device checks every field against the quote
+       * the user approved before signing (`adapters/circle/`).
+       */
+      kind: "circle_app_kit_bridge";
+      chain: TCaip2;
+      /** Which Circle product: `cctp` (USDC) or `cctpx` (EURC). */
+      protocol: "cctp" | "cctpx";
+      /** App Kit chain identifiers, e.g. `"Base"`, `"Arc"`. */
+      sourceChain: string;
+      destinationChain: string;
+      /** App Kit token alias, `"USDC"` or `"EURC"`. */
+      token: string;
+      /** The source contract the alias must resolve to. */
+      tokenAddress: string;
+      /** Human decimal string, App Kit's amount format. */
+      amount: string;
+      recipientAddress: string;
+      transferSpeed: "SLOW";
+      useForwarder: true;
+      /** Human decimal cap on the protocol fee (USDC routes). */
+      maxFee?: string;
+      /** Provider-signed quote. OPAQUE: passed back to `bridge()` as-is. */
+      quote?: unknown;
     };
 
 /**
@@ -173,6 +208,14 @@ export interface TBridgeStatus {
   /** Populated on `refunded` — where the money went back to. */
   refundChain?: TCaip2;
   explorerUrl?: string;
+  /**
+   * A destination-side invocation the recipient's OWN wallet must sign
+   * before the transfer completes. Today only CCTP into Stellar, which has
+   * no Forwarding Service: `CctpForwarder.mint_and_forward(message,
+   * attestation)`. Permissionless and atomic, and it can only pay the
+   * recipient the burn already named. Signed through `bridge_claim`.
+   */
+  destinationAction?: TBridgeExecutionPayload;
 }
 
 export interface TBridgeQuote {

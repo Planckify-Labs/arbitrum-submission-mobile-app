@@ -1,10 +1,14 @@
 # Bridge Capability — Engineering Spec
 
-**Status:** Proposed (not implemented).
+**Status:** Implemented, all phases (0-5 on 2026-08-04; phase 4 rebuilt
+and extended on 2026-09-26, see §5.4 and §5.4.1). Not device-verified.
+Stellar mainnet stays behind `CCTP_STELLAR_MAINNET_ENABLED` (§10.6).
 **Scope:** 3 repos — `mobile-app`, `api`, `agent-api`.
-**Sources verified:** Circle docs (`developers.circle.com`, 2026-08-04)
-and live `li.quest` v1 API. §2 corrects an earlier EURC claim that came
-from secondary sources and was wrong.
+**Sources verified:** Circle docs (`developers.circle.com`, 2026-08-04 and
+2026-09-26), Arc App Kit docs (`docs.arc.io/app-kit`) plus the shipped
+`@circle-fin/app-kit@1.15.3` source, the deployed Stellar CCTP contracts'
+own Soroban spec, and live `li.quest` v1 API. §2 corrects an earlier EURC
+claim that came from secondary sources and was wrong.
 **Related:** `docs/defi-strategies-spec.md` (§11 executors, §13 backend),
 `docs/defi-pool-level-deposits-spec.md` (registry/docking precedent),
 `docs/generative-ui-spec.md` (StructuredUI cards),
@@ -127,7 +131,7 @@ deliberately unrelated to public chain IDs:
 |---|---|---|---|---|---|
 | 0 | Ethereum | 12 | Codex | 22 | Plume |
 | 1 | Avalanche | 13 | Sonic | 25 | Starknet |
-| 2 | OP Mainnet | 14 | World Chain | 26 | Arc testnet |
+| 2 | OP Mainnet | 14 | World Chain | 26 | Arc (mainnet + testnet) |
 | 3 | Arbitrum | 15 | Monad | **27** | **Stellar** |
 | 5 | Solana | 16 | Sei | 28 | EDGE |
 | 6 | Base | 17 | BNB Smart Chain¹ | 29 | Injective |
@@ -256,7 +260,67 @@ unverifiable domain table does not block us.
 Cache TTL 1h, stale-while-revalidate. A cold/failed fetch degrades to
 "we could not check routes right now", never to a wrong "unsupported".
 
-### 5.4 Second provider: CCTP direct, **Stellar-only** (phase 4)
+### 5.4 Circle providers: Arc App Kit for USDC/EURC, raw CCTP for Stellar (phase 4)
+
+> **Rebuilt 2026-09-26.** The Stellar-only scoping below (§10.5) was
+> overtaken by two facts: LI.FI lists Arc mainnet but serves no route on
+> it, and routing USDC through LI.FI costs 25 bps on a rail Circle runs
+> for free. Phase 4 now registers THREE Circle adapters. The original
+> text follows this box and is kept for its reasoning.
+>
+> | Adapter | Asset | Built on | Reach | Mechanism |
+> |---|---|---|---|---|
+> | `circle-cctp` | USDC | **Arc App Kit** (`@circle-fin/app-kit`) | App Kit's bridge chains: EVM sources, EVM + Solana destinations | CCTP V2 + Forwarding Service |
+> | `circle-cctpx` | EURC | **Arc App Kit** | chains App Kit marks `cctpx` (Ethereum, Avalanche, OP, Arbitrum, Base, Polygon, Arc) | CCTP for non-USDC, always forwarded |
+> | `cctp` | USDC | raw contract calls | EVM ⇄ Stellar, both directions | CCTP V2; Stellar has no Forwarding Service |
+>
+> **Why App Kit.** Circle's Arc docs send builders to App Kit for
+> bridging ("App Kit wraps CCTP"). It owns the approve → burn →
+> attestation → mint lifecycle, the fee quote, the CCTPx signed quote and
+> Solana ATA creation. Bridge Kit is folded into it; we install the core
+> package. The api calls `AppKit.estimateBridge()` (read-only, with a Viem
+> adapter around an account that throws on every signature). The device
+> uses only the `@circle-fin/app-kit/bridge` + `/context` subpaths and
+> `@circle-fin/adapter-viem-v2` (Metro bundles those, not the 2.5 MB
+> index), in exactly one file:
+> `services/bridgeRoutes/adapters/circle/appKitBridge.ts`.
+>
+> **Why on-device execution is safe on a 15-minute transfer.** App Kit's
+> `bridge()` awaits the whole lifecycle in-process. Every Circle payload
+> sets `useForwarder: true`, so Circle submits the destination mint and
+> nothing after the burn needs the phone. The device resolves at the
+> point of no return, App Kit's `bridge.burn` event (`bridge.transfer` for
+> CCTPx), and hands the hash to `bridge_status`, which polls Iris
+> (`forwardState`) from the backend. This replaces the remote-signing
+> backend job sketched in swap spec §4.11: forwarding removes the only
+> reason that job existed, and without forwarding it would still have
+> needed a destination signature 15 minutes later.
+>
+> **What the device checks before signing.** The backend sends parameters,
+> never calldata, and App Kit builds the calls against Circle's pinned
+> contracts. The phone still verifies every parameter against the quote
+> the user approved, and resolves chain names through App Kit's own
+> registry (`resolveChainIdentifier`) so a backend cannot relabel one
+> chain as another (`verifyPayload.ts`). The EVM signer is issued for the
+> source chain only.
+>
+> **Routing.** Both App Kit adapters declare `supportsAsset`, so the
+> registry sorts them ahead of LI.FI for USDC/EURC; LI.FI stays the
+> fallback when they decline (estimate failure, a destination without
+> Forwarding Service, a source whose Standard attestation exceeds an
+> hour: Linea is 6-32 h). Standard speed always; Fast is never selected
+> silently. The fee on screen is the fee that executes: the burn's
+> `maxFee` is pinned to the quoted forwarding fee, and Circle spends
+> unused headroom as destination priority fee, so expected == minimum.
+>
+> **Verified live, 2026-09-26:** Base → Arc quote (5 USDC → 4.982262 after
+> a 0.017738 delivery fee); Arc → Base EURC quote (full amount arrives,
+> 0.057 USDC native fee on top); and an end-to-end App Kit transfer Arc
+> Testnet → Base Sepolia driven exactly as the device drives it (burn
+> event at +6.8 s, forwarded mint at +31.7 s, 1.94535 USDC received as
+> quoted).
+
+#### Original phase-4 text (2026-08-04)
 
 > **Scope decision (§10.5).** The `cctp` adapter serves **only routes
 > touching Stellar**. It is deliberately *not* a general EVM provider.
@@ -300,6 +364,9 @@ Soroban, not the SDK. Scope accordingly.
 
 Note also that Bridge Kit has been folded into **Arc App Kit** as of
 2026-03-17 and its docs migrated, so pin versions and expect churn.
+(Superseded above: App Kit still reaches EVM + Solana only, so Stellar
+stays raw, but every other Circle-issued route now goes through it. The
+package is pinned at 1.15.3 in both repos.)
 
 #### 5.4.1 Stellar CCTP hazards ⚠️
 
@@ -323,6 +390,47 @@ Both are exactly the bug class in `feedback_address_case_per_encoding`:
 per-encoding address semantics that shared code must not flatten. Phase 4
 carries a mandatory testnet dry-run before any mainnet path ships, and
 the decimals must come from the adapter, never a constant.
+
+> ⚠️ **Correction, 2026-09-26: the first implementation got the hook wrong,
+> and missed a step.** Circle has since published the Stellar layout
+> (`/cctp/references/stellar`), confirmed byte for byte against a real
+> mainnet transfer (tx `b2424716…3f53`):
+>
+> | Bytes | Field | Was (wrong) | Is |
+> |---|---|---|---|
+> | 0-23 | magic | `cctp-forward` (the Forwarding Service's) | **all zero** |
+> | 24-27 | version | 0 | 0 |
+> | 28-31 | length L | 32 | L = strkey length (56) |
+> | 32.. | recipient | 32 raw key bytes | **the strkey STRING, UTF-8** |
+>
+> Three more facts the build now encodes:
+>
+> 3. **Someone must claim.** With no Forwarding Service on Stellar, an
+>    attested burn sits unminted until `CctpForwarder.mint_and_forward(
+>    message, attestation)` is called. Anyone may call it, and it pays the
+>    recipient named in the burn, atomically. The user's own Stellar
+>    wallet claims through the new `bridge_claim` write tool, and the
+>    transfer is `completed` only when the MessageTransmitter reports the
+>    nonce used (`is_nonce_used`), never on attestation alone.
+> 4. **Stellar → EVM now exists.** `deposit_for_burn_with_hook` on the
+>    Stellar `TokenMessengerMinter`, argument layout read from the
+>    deployed contract's own spec, carrying Circle's Forwarding Service
+>    hook so Circle mints on the EVM side. It pulls with `transfer_from`,
+>    so it needs a SEP-41 `approve` first (a simulation without it fails
+>    "not enough allowance to spend"). Stellar burns only through the
+>    sixth decimal, so the quote truncates rather than silently leaving
+>    dust.
+> 5. **The device verifies Stellar payloads itself** (these ARE calldata):
+>    `stellarCctpVerify.ts` decodes both directions against pinned ids,
+>    and the Stellar kit signs only two (contract, method) pairs
+>    (`walletKit/stellar/cctpContracts.ts`).
+>
+> **Testnet dry-run (§10.6), both directions, passed 2026-09-26:**
+> Stellar → Arc Testnet (20 USDC, burn `32e1f21a…`, forwarded mint
+> `0xed74119d…`, 19.980088 received as quoted) and Arc Testnet → Stellar
+> (5 USDC, burn `0xbd3c48ac…`, claim `2d876f77…`, +5.0000000 received,
+> status flipped to `completed` via the nonce check). Mainnet remains a
+> deliberate `CCTP_STELLAR_MAINNET_ENABLED=true` decision, not a default.
 
 ### 5.5 Circle Gateway — considered, rejected
 
@@ -509,6 +617,12 @@ no Forwarding Service**, so the §7.5 warning and top-up path remain
 mandatory there. `gasTopUp?()` presence-checking already expresses this
 correctly, an adapter that can forward simply reports no strand risk.
 
+**Now the default for every Circle route except Stellar** (§5.4): both
+App Kit adapters always forward, and App Kit's chain definitions carry
+`forwarderSupported.destination`, so a destination without it (X Layer,
+Plasma, Cronos and others) is not offered by `circle-cctp` and falls back
+to LI.FI. Stellar inbound ends in a user-signed claim instead (§5.4.1).
+
 ### 7.6 No route available
 
 When `supports()` returns false for the pair (any Stellar leg, or an
@@ -604,7 +718,8 @@ a stale route.
 | `bridge_get_support` | read | Queryable matrix (§5.3) |
 | `bridge_quote` | read | Returns full `BridgeQuote` (§6) |
 | `bridge_execute` | **write** | Approval card, facts-first |
-| `bridge_status` | read | Drives `BridgeProgressCard` |
+| `bridge_status` | read | Drives `BridgeProgressCard`; returns `claim_required` when the destination waits on the user |
+| `bridge_claim` | **write** | Stellar leg of CCTP into Stellar (`mint_and_forward`), own card and gate (§5.4.1) |
 
 `defi_cross_chain_deposit` is refactored to compose `bridge_quote` +
 `bridge_execute`, keeping its current name and contract.
@@ -612,9 +727,9 @@ a stale route.
 **Registration is not optional and is enforced.** Per
 `feedback_registry_parity_enforcement`:
 
-- add all four to `agent-api/src/tools/registry.ts`;
+- add all five to `agent-api/src/tools/registry.ts`;
 - mirror in `services/agent-executors/expectedMobileTools.ts`;
-- add `bridge_execute` to **`MOBILE_WRITE_TOOLS`** — `authorizeToolCall`
+- add `bridge_execute` and `bridge_claim` to **`MOBILE_WRITE_TOOLS`** — `authorizeToolCall`
   fails closed on a known-write mislabeled as read
   (`services/agentSession/authorizeToolCall.ts:118`), which is the
   agent-drain defense;
@@ -642,14 +757,14 @@ to follow.
 
 ## 9. Phasing
 
-| Phase | Deliverable | Unblocks |
-|---|---|---|
-| **0** | Widen `LifiQuote` → `BridgeQuote` (§6) | Everything |
-| **1** | `BridgeRouteAdapter` + LI.FI adapter + CAIP-2 DTO (§5) | Non-USDC, non-EVM |
-| **2** | `bridge_*` tools + parity registration (§8.3) | Agent access |
-| **3** | `BridgeQuoteCard` + `BridgeProgressCard` (§7) | User-facing |
-| **4** | `cctp` adapter, raw Soroban (§5.4) | **Stellar** |
-| **5** | `gasTopUp` optional capability (§7.5) | Strand protection |
+| Phase | Deliverable | Unblocks | Status |
+|---|---|---|---|
+| **0** | Widen `LifiQuote` → `BridgeQuote` (§6) | Everything | ✅ 2026-08-04 |
+| **1** | `BridgeRouteAdapter` + LI.FI adapter + CAIP-2 DTO (§5) | Non-USDC, non-EVM | ✅ 2026-08-04 |
+| **2** | `bridge_*` tools + parity registration (§8.3) | Agent access | ✅ 2026-08-04; `bridge_claim` 2026-09-26 |
+| **3** | `BridgeQuoteCard` + `BridgeProgressCard` (§7) | User-facing | ✅ 2026-08-04; `BridgeClaimCard` 2026-09-26 |
+| **4** | Circle adapters: App Kit USDC/EURC + raw Stellar both ways (§5.4) | **Arc, EURC, Stellar** | ✅ 2026-09-26, testnet dry-run passed; Stellar mainnet flag-gated |
+| **5** | `gasTopUp` optional capability (§7.5) | Strand protection | ✅ built; UI parked (`GAS_TOP_UP_ENABLED=false`) |
 
 Phases 1-3 ship a complete bridge for EVM + Solana + Sui via LI.FI.
 Phase 4 is a separate, higher-risk workstream (§5.4.1 hazards, no usable
@@ -670,7 +785,9 @@ design language in `feedback_agent_tool_card_design`.
 All open questions from the first draft are closed. Recorded here with
 reasoning so the *why* survives.
 
-1. **EURC** — dropped. CCTP does not support it (§2).
+1. **EURC** — ~~dropped. CCTP does not support it (§2).~~ Superseded
+   2026-09-26: EURC moves through Circle's CCTP for non-USDC assets, a
+   separate product, and ships as its own adapter `circle-cctpx` (§5.4).
 2. **Fee take** — `integratorFee` stays **0** for now. We have no bridge
    volume yet, and the user already pays bridge fee + gas + slippage;
    adding bps on top worsens the rate exactly when we are building
@@ -685,6 +802,10 @@ reasoning so the *why* survives.
    already exist in our codebase.
 5. **Overlap policy** — dissolved by scoping the `cctp` adapter to
    Stellar-only (§5.4). With no overlap there is nothing to arbitrate.
+   *Reopened 2026-09-26:* `circle-cctp` now overlaps LI.FI on USDC by
+   design. Resolved by the registry's existing specificity rule (an
+   adapter that answers `supportsAsset` sorts first), with LI.FI as the
+   fallback, never by an arbitration branch.
 6. **Stellar CCTP validation** — make invalid states unconstructible
    rather than relying on call-site discipline. Phase 4 ships:
    - a pure builder for the burn params that **cannot** emit a wrong
@@ -696,14 +817,24 @@ reasoning so the *why* survives.
    `mint_and_forward` is atomic and non-custodial (Circle docs), so risk
    concentrates in constructing the *source* burn, not the Stellar leg.
    Cheap insurance against permanent, unrecoverable loss (§5.4.1).
-7. **Arc** — no special handling needed. CCTP is Arc **testnet only**
-   (domain 26); LI.FI carries Arc mainnet (`5042`) and testnet
-   (`5042002`), so mainnet routes via `lifi` automatically. Because the
-   support matrix is queried at runtime (§5.3), Arc graduating to CCTP
-   mainnet requires **no deploy** on our side. This is the design
-   paying off.
+7. **Arc** — ~~no special handling needed; mainnet routes via `lifi`
+   automatically~~. **Wrong in practice** (found 2026-09-11): LI.FI lists
+   Arc mainnet but every quote returns "Chain 5042 is not supported".
+   Arc mainnet is CCTP domain 26 with Forwarding Service, and reaches us
+   through `circle-cctp` / `circle-cctpx` (§5.4). No Arc-specific code:
+   Arc is a row in App Kit's chain list like any other.
 
 ### 10.1 Still genuinely unknown
+
+- **Sui USDC after 2026-12-01.** Sui is CCTP V1 only, V1 is switched off
+  on 2026-12-01, and App Kit does not list Sui. Sui USDC stays on LI.FI
+  (`mayanMCTP`) until Circle ships Sui on V2; check before 2026-10-31.
+- **Arc destination gas warning.** ~~The EVM readiness check warns "no gas"
+  on an empty Arc wallet even though the arriving USDC is Arc's gas.~~
+  **Resolved:** `evmCheckBridgeDestinationReadiness` recognizes Arc
+  (`chainId: 5042` / `5042002`, `nativeCurrency.symbol === "USDC"`) and
+  native transfers, suppressing the false warning because the arriving
+  USDC delivers native gas directly.
 
 - **Demand for USDC on Stellar.** Phase 4's priority depends on user
   demand we cannot see from the code. The shipped Play Store build

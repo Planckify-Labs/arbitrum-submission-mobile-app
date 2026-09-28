@@ -1,4 +1,5 @@
 import BalancesCard from "./cards/BalancesCard";
+import BridgeClaimCard from "./cards/BridgeClaimCard";
 import BridgeProgressCard from "./cards/BridgeProgressCard";
 import BridgeQuoteCard from "./cards/BridgeQuoteCard";
 import DefiWithdrawCard from "./cards/DefiWithdrawCard";
@@ -114,6 +115,8 @@ export const toolComponents: Record<string, ToolComponent<any, any>> = {
   bridge_quote: BridgeQuoteCard,
   bridge_execute: BridgeProgressCard,
   bridge_status: BridgeProgressCard,
+  // Stellar leg of a CCTP transfer into Stellar: own card, own gate.
+  bridge_claim: BridgeClaimCard,
   // Bridges first, then deposits on arrival — so its success payload is
   // the same `phase`/`outcome`/`source_tx_hash` shape the progress card
   // already renders. Registered because an unmapped tool renders NOTHING

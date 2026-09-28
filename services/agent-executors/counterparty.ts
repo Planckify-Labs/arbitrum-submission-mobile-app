@@ -125,6 +125,10 @@ export const TOOLS_WITHOUT_COUNTERPARTY: ReadonlySet<string> = new Set([
   // Settles inside a pre-signed on-chain allowance whose caveats are the
   // hard ceiling; there is no address for the user to vet per call.
   "x402_fetch",
+  // Completes a transfer already sent: the payout recipient is fixed
+  // inside the attested burn and the target is a Circle contract pinned on
+  // the device. There is no address in the call for the user to vet.
+  "bridge_claim",
   // First-party rails — the counterparty is TakumiPay itself.
   "deposit_points",
   "execute_redemption",

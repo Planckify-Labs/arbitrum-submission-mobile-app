@@ -93,8 +93,7 @@ function canonicalAccountName(name: string): string {
   return (
     name
       .replace(/\s*[·•|-]\s*(ETH|SOL|SOLANA|ETHEREUM|SUI|STELLAR)\s*$/i, "")
-      .trim() ||
-    name
+      .trim() || name
   );
 }
 

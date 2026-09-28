@@ -865,13 +865,12 @@ const BridgeQuoteCard: React.FC<
       </View>
       <AssetLine side={quote.to} caption="You receive" />
 
-      {/* §7.1 native vs wrapped, said plainly */}
+      {/* §7.1 native asset confirmation */}
       {quote.receives_native_asset ? (
         <View className="flex-row items-center gap-1 mt-1.5">
           <BadgeCheck size={12} color="#059669" />
           <Text className="text-[11px] font-semibold text-emerald-700">
-            You receive native {quote.to?.token?.symbol ?? "tokens"}, not a
-            wrapped version.
+            You receive native {quote.to?.token?.symbol ?? "tokens"}.
           </Text>
         </View>
       ) : null}

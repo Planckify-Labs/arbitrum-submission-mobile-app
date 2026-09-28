@@ -121,9 +121,7 @@ const BaseModal = forwardRef<BaseModalRef, BaseModalProps>(
   ) => {
     const { top, bottom } = useSafeAreaInsets();
     const bottomOffset =
-      Platform.OS === "ios"
-        ? 16
-        : Math.max(bottom, ANDROID_MIN_BOTTOM_INSET);
+      Platform.OS === "ios" ? 16 : Math.max(bottom, ANDROID_MIN_BOTTOM_INSET);
     const statusBarHeight = Math.max(
       top,
       Platform.OS === "android" ? (StatusBar.currentHeight ?? 0) : 0,

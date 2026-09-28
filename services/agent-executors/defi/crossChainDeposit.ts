@@ -463,5 +463,8 @@ function classifyCrossChainError(err: unknown): string {
   if (code === "quote_stale") return "stale_precondition";
   if (code === "unsupported_chain") return "unsupported_chain";
   if (code === "wallet_cannot_execute") return "wallet_cannot_execute";
+  if (code === "insufficient_funds") return "insufficient_funds";
+  // The payload the device would sign disagrees with the approved quote.
+  if (code === "payload_mismatch") return "decoded_intent_mismatch";
   return "network_error";
 }

@@ -114,7 +114,15 @@ export default defineConfig({
       // The destination-wallet interlock: what stops a `bridge_execute`
       // signing an address the user has already replaced (§7.4).
       "services/bridgeRoutes/destinationChoice.test.ts",
+      "services/bridgeStatusStore.test.ts",
+      // Device-side payload checks before signing: Circle App Kit routes
+      // (§5.4) and the raw CCTP ⇄ Stellar routes (§5.4.1), plus the pinned
+      // Soroban call allowlist the Stellar kit enforces.
+      "services/bridgeRoutes/adapters/circle/verifyPayload.test.ts",
+      "services/bridgeRoutes/adapters/stellarCctpVerify.test.ts",
+      "services/walletKit/stellar/cctpContracts.test.ts",
       "components/home/TakumiAgent/StructuredUI/cards/bridgeFormat.test.ts",
+      "components/home/TakumiAgent/StructuredUI/bridgeDedupe.test.ts",
       // Facts-first approval text — the surface a confirmation is
       // recorded against, so it must state amount + destination.
       "components/home/TakumiAgent/StructuredUI/approvalSummary.test.ts",

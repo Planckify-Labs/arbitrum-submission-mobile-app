@@ -426,6 +426,8 @@ export type BridgeExecutionPayload =
       contractId: string;
       method: string;
       argsXdrBase64: string[];
+      /** SEP-41 allowance to grant first (Stellar-source CCTP burn). */
+      approval?: { token: string; spender: string; amountRaw: string };
     };
 
 /**

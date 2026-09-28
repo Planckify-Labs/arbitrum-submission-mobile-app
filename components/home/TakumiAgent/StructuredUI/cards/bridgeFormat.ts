@@ -14,6 +14,7 @@
  * (CLAUDE.md user-facing errors).
  */
 
+import type { TBlockchain } from "@/api/types/blockchain";
 import type {
   TBridgeFee,
   TBridgeOutcome,
@@ -272,6 +273,56 @@ export function chainLabel(
   return (
     known.find((c) => c.chain === caip2)?.name ?? CHAIN_NAMES[caip2] ?? caip2
   );
+}
+
+/**
+ * Resolves a human display name for a chain, guaranteeing that the card
+ * NEVER displays "Unknown chain" to the user.
+ *
+ * Checks in order:
+ * 1. Non-generic fallback name passed from backend/quote (if not "Unknown chain")
+ * 2. Active blockchains lookup by caip2Id or EVM chainId
+ * 3. Static CHAIN_NAMES table (e.g. Base Sepolia, Arc Testnet)
+ * 4. Raw caip2 identifier (if not "Unknown chain")
+ * 5. Friendly contextual role label (e.g. "Source chain" or "Destination chain")
+ */
+export function resolveChainName(
+  caip2: string | undefined,
+  fallbackName: string | undefined,
+  blockchains: TBlockchain[] | undefined,
+  defaultRoleLabel: string,
+): string {
+  if (
+    fallbackName &&
+    fallbackName.trim() !== "" &&
+    fallbackName !== "Unknown chain"
+  ) {
+    return fallbackName;
+  }
+  if (!caip2 || caip2 === "Unknown chain") {
+    return defaultRoleLabel;
+  }
+
+  const match = blockchains?.find(
+    (b) =>
+      b.caip2Id === caip2 ||
+      (b.isEVM &&
+        b.chainId !== null &&
+        b.chainId !== undefined &&
+        `eip155:${b.chainId}` === caip2),
+  );
+  if (match?.name && match.name !== "Unknown chain") {
+    return match.name;
+  }
+
+  if (CHAIN_NAMES[caip2] && CHAIN_NAMES[caip2] !== "Unknown chain") {
+    return CHAIN_NAMES[caip2];
+  }
+
+  if (caip2 && caip2 !== "Unknown chain") {
+    return caip2;
+  }
+  return defaultRoleLabel;
 }
 
 /** Middle-truncate an address for display without hiding its ends. */

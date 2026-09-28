@@ -25,6 +25,7 @@ import {
   partitionFees,
   pendingBridgeCopy,
   phaseCopy,
+  resolveChainName,
   truncateAddress,
 } from "./bridgeFormat";
 
@@ -265,6 +266,84 @@ describe("chainLabel", () => {
     // Honest beats wrong: an unrecognised chain shows its CAIP-2 id.
     expect(chainLabel("eip155:999999")).toBe("eip155:999999");
     expect(chainLabel(undefined)).toBe("Unknown chain");
+  });
+});
+
+describe("resolveChainName", () => {
+  it("resolves Base Sepolia and Arc Testnet from static CHAIN_NAMES table", () => {
+    expect(
+      resolveChainName("eip155:84532", undefined, undefined, "Source chain"),
+    ).toBe("Base Sepolia");
+
+    expect(
+      resolveChainName(
+        "eip155:5042002",
+        undefined,
+        undefined,
+        "Destination chain",
+      ),
+    ).toBe("Arc Testnet");
+  });
+
+  it("prefers non-generic fallback name when valid", () => {
+    expect(
+      resolveChainName("eip155:8453", "Base", undefined, "Source chain"),
+    ).toBe("Base");
+  });
+
+  it("ignores 'Unknown chain' fallback name and resolves via caip2 table lookup", () => {
+    expect(
+      resolveChainName(
+        "eip155:84532",
+        "Unknown chain",
+        undefined,
+        "Source chain",
+      ),
+    ).toBe("Base Sepolia");
+  });
+
+  it("resolves from active blockchains list by caip2Id or EVM chainId", () => {
+    const blockchains = [
+      {
+        id: "1",
+        name: "Custom Base",
+        caip2Id: "eip155:8453",
+        chainId: 8453,
+        isEVM: true,
+        isActive: true,
+        isTestnet: false,
+        rpcUrl: "",
+        blockExplorer: "",
+        updatedAt: "",
+      },
+    ];
+    expect(
+      resolveChainName("eip155:8453", undefined, blockchains, "Source chain"),
+    ).toBe("Custom Base");
+  });
+
+  it("never returns 'Unknown chain' when caip2 is missing, falling back to role label", () => {
+    expect(
+      resolveChainName(undefined, undefined, undefined, "Source chain"),
+    ).toBe("Source chain");
+
+    expect(
+      resolveChainName(
+        undefined,
+        "Unknown chain",
+        undefined,
+        "Destination chain",
+      ),
+    ).toBe("Destination chain");
+
+    expect(
+      resolveChainName(
+        "Unknown chain",
+        "Unknown chain",
+        undefined,
+        "Destination chain",
+      ),
+    ).toBe("Destination chain");
   });
 });
 

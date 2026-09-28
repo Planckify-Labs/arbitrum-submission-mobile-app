@@ -163,7 +163,7 @@ export function ensureProxyToken(origin: string): Promise<void> {
 
   const run = mint(origin)
     .catch((err) => {
-      if (__DEV__) {
+      if (typeof __DEV__ !== "undefined" && __DEV__) {
         console.warn("[proxyToken] mint failed", origin, err);
       }
     })

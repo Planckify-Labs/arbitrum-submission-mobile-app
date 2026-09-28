@@ -121,18 +121,50 @@ const MIN_GAS_WEI = 200_000_000_000_000n; // 0.0002 ETH
 /** Suggested top-up, in USD. Small on purpose (§7.5 copy: "Add $2 of ETH"). */
 const SUGGESTED_TOP_UP_USD = 2;
 
+/** Arc chain IDs (mainnet: 5042, testnet: 5042002). */
+const ARC_CHAIN_IDS = new Set<number>([5042, 5042002]);
+
+export function isArcChain(chain: ChainConfig): boolean {
+  if (chain.namespace !== EVM_NAMESPACE) return false;
+  return (
+    ARC_CHAIN_IDS.has(chain.chain.id) ||
+    chain.chain.nativeCurrency.symbol === "USDC" ||
+    chain.chain.name.toLowerCase().startsWith("arc")
+  );
+}
+
 /**
  * EVM destination readiness: the precondition is NATIVE GAS.
  *
  * Any valid EVM address can receive any ERC-20, so there is no
  * receive-side blocker here. The strand risk is entirely about being able
  * to MOVE the funds afterwards.
+ *
+ * Arc uses USDC as its native currency / gas token (§10.1). When bridging
+ * to Arc, the arriving funds deliver native gas to the destination wallet,
+ * so an empty Arc wallet is not at strand risk and does not show the
+ * "no gas" warning.
  */
 export async function evmCheckBridgeDestinationReadiness({
   chain,
   address,
+  contractAddress,
 }: BridgeDestinationReadinessArgs): Promise<BridgeReadinessBlocker[]> {
   if (chain.namespace !== EVM_NAMESPACE) return [];
+
+  // Arc uses USDC as its native token / gas. Even if the user currently
+  // has 0 USDC on Arc, bridging to Arc delivers native gas, so having
+  // zero USDC on Arc beforehand does not strand them. Suppress the warning
+  // for Arc (§10.1).
+  if (isArcChain(chain)) {
+    return [];
+  }
+
+  // If the incoming asset is native gas (no contract address), the
+  // transfer delivers gas itself, so there is no strand risk.
+  if (!contractAddress) {
+    return [];
+  }
 
   let balance: bigint;
   try {

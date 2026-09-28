@@ -173,6 +173,10 @@
   },
   "files": {
     "ignoreUnknown": true,
-    "includes": ["**", "!services/agent-executors/agentManifests.json"]
+    "includes": [
+      "**",
+      "!services/agent-executors/agentManifests.json",
+      "!eslint.config.js"
+    ]
   }
 }

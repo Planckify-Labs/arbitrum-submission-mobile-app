@@ -29,6 +29,12 @@
  * optimisation.
  */
 
+import {
+  Address,
+  nativeToScVal,
+  scValToNative,
+  xdr,
+} from "@stellar/stellar-base";
 import type { ChainConfig } from "@/constants/configs/chainConfig";
 import {
   BASE_RESERVE_STROOPS,
@@ -36,13 +42,21 @@ import {
   detectAccountFunded,
 } from "@/services/chains/stellar/accountState";
 import { getHorizonClient } from "@/services/chains/stellar/horizonClient";
+import { invokeSorobanContract } from "@/services/chains/stellar/sorobanInvoke";
+import { getSorobanRpcClient } from "@/services/chains/stellar/sorobanRpcClient";
 import { hasTrustline } from "@/services/chains/stellar/trustlineService";
+import { getStellarSignerForWallet } from "@/services/walletService";
 import {
   type BridgeDestinationReadinessArgs,
   BridgePayloadUnsupportedError,
   type BridgeReadinessBlocker,
   type SubmitBridgeExecutionArgs,
 } from "../types";
+import {
+  classifyStellarBridgeCall,
+  type StellarCctpNetwork,
+  stellarUsdcSacId,
+} from "./cctpContracts";
 
 const STELLAR_NAMESPACE = "stellar" as const;
 
@@ -129,20 +143,133 @@ export function stellarFromAssetCaip19(asset: string): string | null {
 }
 
 /**
- * Stellar has no LI.FI route (§3.2), so no provider hands us a
- * serialised Stellar transaction to sign today. The CCTP path burns on an
- * EVM source and the destination mint is atomic and non-custodial inside
- * `CctpForwarder` — nothing for this wallet to sign at all.
+ * Ledgers a SEP-41 allowance stays valid (~83 minutes at 5 s a ledger).
+ * The burn that consumes it is the very next transaction, so a short
+ * window leaves no standing allowance behind if that burn never lands.
+ */
+const APPROVAL_LEDGER_WINDOW = 1_000;
+
+function decodeArgs(argsXdrBase64: readonly string[]): xdr.ScVal[] {
+  return argsXdrBase64.map((b64) => xdr.ScVal.fromXDR(b64, "base64"));
+}
+
+/**
+ * Sign and submit a Soroban bridge invocation (`soroban_invoke`).
  *
- * The method is still implemented so a future Stellar-source bridge docks
- * by extending it rather than by editing shared code, and so an
- * unexpected payload fails loudly with a typed error instead of silently
- * doing nothing.
+ * Exactly two calls are accepted, both CCTP and both against contracts
+ * PINNED ON THE DEVICE (`cctpContracts.ts`), never the backend's say-so:
+ *
+ *   - a Stellar-SOURCE burn, `deposit_for_burn_with_hook` on Circle's
+ *     `TokenMessengerMinter`, preceded by the SEP-41 `approve` it needs
+ *     (the contract pulls the USDC with `transfer_from`). The approve must
+ *     name the pinned USDC contract and the pinned minter, the burn's
+ *     `caller` must be this wallet, and both must move the same amount.
+ *   - an inbound transfer's claim, `mint_and_forward` on `CctpForwarder`.
+ *     Stellar has no Forwarding Service, so the user's own wallet collects
+ *     the funds; the call is permissionless and can only pay the
+ *     recipient the burn already named.
+ *
+ * Anything else is a `BridgePayloadUnsupportedError`. No restore callback
+ * is passed, so archived contract state fails with a curated error rather
+ * than spending XLM the user was not asked about.
  */
 export async function stellarSubmitBridgeExecution({
+  wallet,
+  chain,
   payload,
 }: SubmitBridgeExecutionArgs): Promise<string> {
-  throw new BridgePayloadUnsupportedError(payload.kind);
+  if (payload.kind !== "soroban_invoke") {
+    throw new BridgePayloadUnsupportedError(payload.kind);
+  }
+  // The payload names its network. Signing a pubnet payload with a
+  // testnet config (or the reverse) builds for the wrong passphrase.
+  const caip2 = stellarCaip2For(chain);
+  if (
+    chain.namespace !== STELLAR_NAMESPACE ||
+    !caip2 ||
+    caip2 !== payload.chain
+  ) {
+    throw new BridgePayloadUnsupportedError(payload.kind);
+  }
+  const network: StellarCctpNetwork =
+    chain.network === "mainnet" ? "pubnet" : "testnet";
+
+  const call = classifyStellarBridgeCall(
+    network,
+    payload.contractId,
+    payload.method,
+  );
+  if (!call) {
+    throw new BridgePayloadUnsupportedError(payload.kind);
+  }
+
+  // The wallet bound to THIS intent, never a home-screen fallback
+  // (`feedback_dapp_bridge_isolation`).
+  const signer = await getStellarSignerForWallet(wallet);
+  if (!signer) {
+    throw new Error("StellarWalletKit.submitBridgeExecution: no signer");
+  }
+
+  const args = decodeArgs(payload.argsXdrBase64);
+  const rpc = getSorobanRpcClient(chain);
+  const horizon = getHorizonClient(chain);
+
+  if (call.kind === "claim") {
+    if (payload.approval || args.length !== 2) {
+      throw new BridgePayloadUnsupportedError(payload.kind);
+    }
+  } else {
+    const usdcSac = stellarUsdcSacId(network);
+    const minter = payload.contractId;
+    const approval = payload.approval;
+    if (
+      !approval ||
+      approval.token !== usdcSac ||
+      approval.spender !== minter ||
+      args.length !== 9
+    ) {
+      throw new BridgePayloadUnsupportedError(payload.kind);
+    }
+    // deposit_for_burn_with_hook(caller, amount, domain, mint_recipient,
+    // burn_token, destination_caller, max_fee, min_finality, hook_data):
+    // the signer burns ITS OWN pinned USDC, for exactly the approved sum.
+    const caller = scValToNative(args[0]);
+    const amount = scValToNative(args[1]);
+    const burnToken = scValToNative(args[4]);
+    if (
+      caller !== signer.publicKey() ||
+      burnToken !== usdcSac ||
+      typeof amount !== "bigint" ||
+      amount !== BigInt(approval.amountRaw)
+    ) {
+      throw new BridgePayloadUnsupportedError(payload.kind);
+    }
+
+    const { sequence } = await rpc.getLatestLedger();
+    // SEP-41 `approve(from, spender, amount, expiration_ledger)`.
+    await invokeSorobanContract({
+      rpc,
+      horizon,
+      signer,
+      contractId: approval.token,
+      method: "approve",
+      args: [
+        new Address(signer.publicKey()).toScVal(),
+        new Address(approval.spender).toScVal(),
+        nativeToScVal(amount, { type: "i128" }),
+        nativeToScVal(sequence + APPROVAL_LEDGER_WINDOW, { type: "u32" }),
+      ],
+    });
+  }
+
+  return invokeSorobanContract({
+    rpc,
+    horizon,
+    signer,
+    contractId: payload.contractId,
+    method: payload.method,
+    args,
+  });
 }
 
 /**

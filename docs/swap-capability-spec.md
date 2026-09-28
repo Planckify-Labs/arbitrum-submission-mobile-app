@@ -726,6 +726,17 @@ Standard on its own, which the card must reflect rather than hide.
 
 ### 4.11 Arc App Kit: an implementation option for the CCTP adapter, never the adapter boundary itself
 
+> **Implemented differently, 2026-09-26** (bridge spec §5.4). The
+> "backend job + remote-signing `Account`" design below was not built.
+> Verified from App Kit's source and a testnet run: with `useForwarder:
+> true` Circle submits the destination mint, so after the burn there is
+> nothing left for the device to sign. The device therefore runs App
+> Kit's `bridge()` itself and hands off to the backend's Iris status poll
+> the moment the `bridge.burn` event fires (+6.8 s on Arc Testnet). Every
+> Circle route forwards, so the 15-minute in-process wait this section
+> worried about is never on the critical path. Destinations without
+> Forwarding Service are not offered by the App Kit adapters.
+
 **Verified against `docs.arc.io` primary docs plus the actual shipped
 package source (`@circle-fin/app-kit@1.15.3`, unpacked and read directly —
 `bridge.mjs` ships unminified), 2026-09-26.** Circle ships one package

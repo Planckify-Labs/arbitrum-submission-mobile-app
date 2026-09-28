@@ -13,6 +13,14 @@
  */
 
 import { cctpStellarBridgeAdapter } from "./adapters/cctpStellarAdapter";
+import {
+  circleCctpBridgeAdapter,
+  circleCctpxBridgeAdapter,
+} from "./adapters/circle/circleAdapters";
+import {
+  evmAppKitSigner,
+  registerAppKitSigner,
+} from "./adapters/circle/signers";
 import { lifiBridgeAdapter } from "./adapters/lifiAdapter";
 import { towerBridgeAdapter } from "./adapters/towerAdapter";
 import { listBridgeAdapters, registerBridgeAdapter } from "./registry";
@@ -25,8 +33,17 @@ export function bootstrapBridgeAdapters(): void {
   // `lifi` — any asset, EVM + Solana + Sui. Misses Stellar.
   registerBridgeAdapter(lifiBridgeAdapter);
 
-  // `cctp` — USDC only, Stellar-only routes. Covers exactly what LI.FI
-  // cannot, which is the case the registry exists to absorb (§3.2, §5.4).
+  // `circle-cctp` / `circle-cctpx` — USDC and EURC through Circle's Arc
+  // App Kit, run on the device with the user's signer (§5.4). The backend
+  // prefers them over LI.FI for those assets; LI.FI stays the fallback.
+  registerBridgeAdapter(circleCctpBridgeAdapter);
+  registerBridgeAdapter(circleCctpxBridgeAdapter);
+  // App Kit needs a signer per source namespace. Only EVM today (App
+  // Kit's Viem adapter); a Solana source docks with one more line here.
+  registerAppKitSigner("eip155", evmAppKitSigner);
+
+  // `cctp` — USDC between EVM and Stellar, both directions, as raw CCTP
+  // calls: App Kit does not reach Stellar (§3.2, §5.4).
   registerBridgeAdapter(cctpStellarBridgeAdapter);
 
   // `tower` — same-chain swaps on Arc. The two above refuse same-chain

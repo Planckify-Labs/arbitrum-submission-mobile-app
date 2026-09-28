@@ -144,6 +144,9 @@ export const TOOL_NAMESPACE_ROLES: Readonly<Record<string, ToolNamespaceSpec>> =
     bridge_execute: { role: "counterparty", chainArg: "to_chain" },
     // Pure status lookup against a submitted transfer; touches no wallet.
     bridge_status: AGNOSTIC,
+    // Signs on the DESTINATION chain with the user's own wallet there,
+    // which need not be the active one.
+    bridge_claim: { role: "counterparty", chainArg: "to_chain" },
 
     // ── x402 ───────────────────────────────────────────────────────────
     // Settles from the active wallet within a pre-signed allowance.

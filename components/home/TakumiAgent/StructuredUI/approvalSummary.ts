@@ -41,6 +41,7 @@ export function truncateAddress(addr: string): string {
 // - see lifi.adapter.ts `chainNameFor`). One table, so the approval gate
 // and the display cards never disagree on a chain's name.
 export const CHAIN_NAMES: Record<string, string> = {
+  // Mainnets
   "eip155:1": "Ethereum",
   "eip155:10": "OP Mainnet",
   "eip155:56": "BNB Chain",
@@ -50,12 +51,23 @@ export const CHAIN_NAMES: Record<string, string> = {
   "eip155:43114": "Avalanche",
   "eip155:59144": "Linea",
   "eip155:5042": "Arc",
-  "eip155:5042002": "Arc Testnet",
   "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp": "Solana",
-  "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1": "Solana Devnet",
   "sui:mainnet": "Sui",
-  "sui:testnet": "Sui Testnet",
   "stellar:pubnet": "Stellar",
+
+  // Testnets
+  "eip155:84532": "Base Sepolia",
+  "eip155:421614": "Arbitrum Sepolia",
+  "eip155:11155111": "Ethereum Sepolia",
+  "eip155:11155420": "OP Sepolia",
+  "eip155:80002": "Polygon Amoy",
+  "eip155:59141": "Linea Sepolia",
+  "eip155:43113": "Avalanche Fuji",
+  "eip155:97": "BNB Chain Testnet",
+  "eip155:5042002": "Arc Testnet",
+  "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1": "Solana Devnet",
+  "sui:testnet": "Sui Testnet",
+  "sui:devnet": "Sui Devnet",
   "stellar:testnet": "Stellar Testnet",
 };
 
@@ -70,7 +82,11 @@ const NATIVE_SYMBOL_BY_CHAIN: Record<string, string> = {
 };
 
 function chainName(caip2: string): string {
-  return CHAIN_NAMES[caip2] ?? caip2;
+  if (CHAIN_NAMES[caip2]) return CHAIN_NAMES[caip2];
+  if (caip2.startsWith("eip155:")) {
+    return `EVM Chain ${caip2.slice("eip155:".length)}`;
+  }
+  return caip2;
 }
 
 /**
@@ -228,6 +244,22 @@ export function approvalSummaryFromToolInput(
   // address would record a confirmation for something never seen.
   const fromChain = str("from_chain");
   const toChain = str("to_chain");
+  // `bridge_claim`: completes a transfer that was ALREADY sent (bridge
+  // spec §5.4.1). It moves nothing the burn did not commit, and carries
+  // no amount, so the facts are where it lands and which transfer it
+  // finishes. Without this branch it would read "Bridge from X to Y",
+  // i.e. describe sending money a second time.
+  const sourceTxHash = str("source_tx_hash");
+  if (fromChain && toChain && sourceTxHash && !str("amount_raw")) {
+    return factsFirstSummary(
+      {
+        action: "Receive",
+        suffix: `your bridged funds on ${chainName(toChain)} (transfer ${truncateAddress(sourceTxHash)})`,
+      },
+      {},
+      `Receive bridged funds on ${chainName(toChain)}`,
+    );
+  }
   if (fromChain && toChain) {
     const symbol =
       assetMeta?.symbol ?? assetSymbolFromCaip19(str("from_asset"));

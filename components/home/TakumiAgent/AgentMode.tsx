@@ -109,6 +109,7 @@ import ConversationHistory from "./ConversationHistory";
 import MessageContent from "./MessageContent";
 import { paidAcknowledgement } from "./mintPaymentIntentTool";
 import QuickPrompts from "./QuickPrompts";
+import { computeSuppressedBridgeToolCallIds } from "./StructuredUI/bridgeDedupe";
 import { useMintPaymentIntentTool } from "./useMintPaymentIntentTool";
 
 const { width: screenWidth } = Dimensions.get("window");
@@ -1492,6 +1493,12 @@ export default function AgentMode({ isActive = true }: TAgentModeProps) {
     decision?.onRequestApproval?.();
   }, []);
 
+  // Dedupe bridge progress cards across messages: exactly one card per transfer.
+  const suppressedBridgeToolCallIds = useMemo(
+    () => computeSuppressedBridgeToolCallIds(messages),
+    [messages],
+  );
+
   const renderChatMessage = useCallback(
     ({ item }: ListRenderItemInfo<ChatMessage>) => {
       const isUser = item.role === "user";
@@ -1516,6 +1523,7 @@ export default function AgentMode({ isActive = true }: TAgentModeProps) {
             addToolResult={handleAddToolResult}
             onUserPrompt={sendTextMessage}
             onRequestApproval={handleRequestApproval}
+            suppressedToolCallIds={suppressedBridgeToolCallIds}
           />
         </View>
       );
@@ -1525,6 +1533,7 @@ export default function AgentMode({ isActive = true }: TAgentModeProps) {
       handleAddToolResult,
       handleRequestApproval,
       sendTextMessage,
+      suppressedBridgeToolCallIds,
     ],
   );
 

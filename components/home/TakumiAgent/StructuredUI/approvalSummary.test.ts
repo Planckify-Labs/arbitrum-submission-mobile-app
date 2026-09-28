@@ -32,6 +32,24 @@ describe("approvalSummaryFromToolInput — bridge", () => {
     expect(summary).toContain("Solana");
   });
 
+  it("renders human-readable testnet names instead of raw CAIP-2 IDs", () => {
+    const summary = approvalSummaryFromToolInput(
+      {
+        from_chain: "eip155:84532",
+        to_chain: "eip155:5042002",
+        amount_raw: "20000000",
+        to_address: "0xc84db8b80b2a30cb4127027ae13ee8a490832146",
+      },
+      undefined,
+      undefined,
+      { symbol: "USDC", decimals: 6 },
+    );
+    expect(summary).toContain("Base Sepolia");
+    expect(summary).toContain("Arc Testnet");
+    expect(summary).not.toContain("eip155:84532");
+    expect(summary).not.toContain("eip155:5042002");
+  });
+
   // "5000000" and "5" are the same argument rendered with and without
   // decimals. Printing the raw one on the screen the user approves
   // against is the bug this guards.
@@ -222,5 +240,23 @@ describe("approvalSummaryFromToolInput — DeFi", () => {
     );
     expect(summary).toContain("Move");
     expect(summary).toContain("Morpho");
+  });
+});
+
+describe("approvalSummaryFromToolInput — bridge_claim", () => {
+  // Completing a transfer already sent must never read as sending again.
+  it("states where the funds land and which transfer it finishes", () => {
+    const summary = approvalSummaryFromToolInput(
+      {
+        from_chain: "eip155:8453",
+        to_chain: "stellar:pubnet",
+        source_tx_hash:
+          "0xbd3c48ac5b6198524e674289e5b851bccc8d983279ffadc76ad77952381db10a",
+      },
+      "Bridge funds",
+    );
+    expect(summary).toContain("Receive");
+    expect(summary).toContain("Stellar");
+    expect(summary).not.toContain("Bridge");
   });
 });

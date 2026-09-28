@@ -8,6 +8,7 @@ import {
   SETUP_CTA_TOOLS,
   toolComponents,
 } from "./StructuredUI";
+import { computeSuppressedBridgePartsInMessage } from "./StructuredUI/bridgeDedupe";
 import { normalizeWalletBalancesOutput } from "./StructuredUI/cards/BalancesCard";
 import { consolidateToolParts } from "./StructuredUI/mergeToolParts";
 import { useOriginAgentDisplay } from "./useOriginAgentDisplay";
@@ -22,6 +23,10 @@ interface MessageContentProps {
    * Keyed by `toolCallId` like `addToolResult`.
    */
   onRequestApproval?: (toolCallId: string) => void;
+  /**
+   * Tool calls suppressed across messages (e.g. duplicate bridge progress cards).
+   */
+  suppressedToolCallIds?: ReadonlySet<string>;
 }
 
 /**
@@ -170,10 +175,19 @@ function computeSuppressedRetryParts(message: AgentMessage): Set<string> {
 }
 
 const MessageContent: React.FC<MessageContentProps> = React.memo(
-  ({ message, mode, addToolResult, onUserPrompt, onRequestApproval }) => {
+  ({
+    message,
+    mode,
+    addToolResult,
+    onUserPrompt,
+    onRequestApproval,
+    suppressedToolCallIds,
+  }) => {
     const isUser = message.role === "user";
     const suppressedBalanceParts = computeSuppressedToolParts(message);
     const suppressedRetryParts = computeSuppressedRetryParts(message);
+    const suppressedBridgePartsInMsg =
+      computeSuppressedBridgePartsInMessage(message);
     // Generic once-per-turn rule for list tools: when the model fans one
     // goal into several calls of the same tool (e.g. an opportunity list
     // per chain), render ONE card carrying the union of the results.
@@ -199,7 +213,9 @@ const MessageContent: React.FC<MessageContentProps> = React.memo(
               SETUP_CTA_TOOLS.has(p.toolName) &&
               !consolidated.suppressed.has(p.toolCallId) &&
               !suppressedBalanceParts.has(p.toolCallId) &&
-              !suppressedRetryParts.has(p.toolCallId),
+              !suppressedRetryParts.has(p.toolCallId) &&
+              !suppressedBridgePartsInMsg.has(p.toolCallId) &&
+              !suppressedToolCallIds?.has(p.toolCallId),
           );
           const setupCtaOwnerId =
             setupCtaOwner && setupCtaOwner.type === "tool"
@@ -228,6 +244,8 @@ const MessageContent: React.FC<MessageContentProps> = React.memo(
               if (suppressedBalanceParts.has(part.toolCallId)) return null;
               if (suppressedRetryParts.has(part.toolCallId)) return null;
               if (consolidated.suppressed.has(part.toolCallId)) return null;
+              if (suppressedBridgePartsInMsg.has(part.toolCallId)) return null;
+              if (suppressedToolCallIds?.has(part.toolCallId)) return null;
 
               // The surviving card of a consolidated group renders the union
               // of its siblings' rows; every other part renders its own.

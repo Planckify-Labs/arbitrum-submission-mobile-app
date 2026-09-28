@@ -43,35 +43,72 @@ import {
   Info,
 } from "lucide-react-native";
 import type React from "react";
-import { useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { Linking, Pressable, Text, View } from "react-native";
+import { bridgeApi } from "@/api/endpoints/bridge";
+import type { TBlockchain } from "@/api/types/blockchain";
 import type {
   TBridgeOutcome,
   TBridgePhase,
   TBridgeRouteStep,
+  TBridgeStatus,
   TBridgeToken,
 } from "@/api/types/bridge";
 import { useBlockchainsWithStorage } from "@/hooks/useBlockchainsWithStorage";
-import { parseCaip2 } from "@/services/bridgeRoutes/caip";
+import { buildChainConfigFromBlockchain } from "@/hooks/useWallet.helpers";
+import {
+  chainOfAsset,
+  chainToCaip2,
+  parseCaip2,
+} from "@/services/bridgeRoutes/caip";
 import { bridgeDestinationChoice } from "@/services/bridgeRoutes/destinationChoice";
+import { useBridgeStatus } from "@/services/bridgeStatusStore";
 import type { Namespace } from "@/services/chains/types";
+import { walletKitRegistry } from "@/services/walletKit/registry";
 import { tapFeedback } from "@/utils/hapticsUtils";
 import { agentErrorCopy } from "../agentErrorCopy";
-import { approvalSummaryFromToolInput } from "../approvalSummary";
+import { approvalSummaryFromToolInput, CHAIN_NAMES } from "../approvalSummary";
 import { resolveApprovalAssetMeta } from "../resolveAssetMeta";
 import type { ToolComponentProps } from "../types";
 import WriteApprovalGate from "../WriteApprovalGate";
 import { AddWalletErrorAction } from "./AddWalletErrorAction";
 import {
-  chainLabel,
   declinedBridgeCopy,
   formatTokenValue,
   outcomeCopy,
   pendingBridgeCopy,
   phaseCopy,
+  resolveChainName,
   truncateAddress,
 } from "./bridgeFormat";
 import { ChainIcon } from "./ChainIcon";
+
+function resolveExplorerTxUrl(
+  caip2: string | undefined,
+  hash: string | undefined,
+  blockchains: TBlockchain[] | undefined,
+): string | undefined {
+  if (!caip2 || !hash) return undefined;
+  for (const b of blockchains ?? []) {
+    try {
+      const cfg = buildChainConfigFromBlockchain(b);
+      if (chainToCaip2(cfg) === caip2) {
+        if (walletKitRegistry.has(cfg.namespace)) {
+          const kit = walletKitRegistry.get(cfg.namespace);
+          const url = kit.buildTxExplorerUrl?.(hash, cfg);
+          if (url) return url;
+        }
+        if (b.blockExplorer) {
+          const base = b.blockExplorer.replace(/\/+$/, "");
+          return `${base}/tx/${hash}`;
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+  return undefined;
+}
 
 const BRAND_RED = "#c71c4b";
 const MUTED = "#6b7280";
@@ -105,14 +142,32 @@ type BridgeProgressData = {
   explorer_url?: string;
   from_chain?: string;
   to_chain?: string;
+  provider?: string;
   /** Backend-resolved display names, so the card never derives one. */
   from_chain_name?: string;
   to_chain_name?: string;
   /** Present when this payload came from `bridge_execute`. */
   steps?: TBridgeRouteStep[];
   duration_range_seconds?: [number, number];
-  to?: { token?: TBridgeToken; amountRaw?: string; chain?: string };
-  from?: { chain?: string; chainName?: string };
+  to?: {
+    token?: TBridgeToken;
+    amountRaw?: string;
+    chain?: string;
+    chainName?: string;
+  };
+  from?: {
+    chain?: string;
+    chainName?: string;
+    token?: TBridgeToken;
+    amountRaw?: string;
+  };
+  bridge?: { key?: string; name?: string };
+  /**
+   * Attested and waiting for the user's own destination wallet to receive
+   * it (CCTP into Stellar has no Forwarding Service, §5.4.1). The claim
+   * itself is `bridge_claim`, a gated write.
+   */
+  claim_required?: boolean;
 };
 
 type BridgeProgressOutput = {
@@ -144,9 +199,8 @@ function phaseIndex(phase: TBridgePhase | undefined): number {
 type DisplayStep = {
   key: string;
   label: string;
-  /** Phase at which this step is considered complete. */
-  completeAtPhase: number;
-  /** Longer-running steps get an expected-time hint. */
+  done: boolean;
+  active: boolean;
   hint?: string;
 };
 
@@ -163,26 +217,33 @@ function isSwap(data: BridgeProgressData): boolean {
   return !!from && from === to;
 }
 
-function buildSteps(data: BridgeProgressData): DisplayStep[] {
+function buildSteps(
+  data: BridgeProgressData,
+  fromChainName: string,
+  toChainName: string,
+): DisplayStep[] {
   const hasApprove = (data.steps ?? []).some((s) => s.kind === "approve");
   const steps: DisplayStep[] = [];
 
+  const current = phaseIndex(data.phase);
+  const isComplete = data.outcome === "completed" || data.phase === "settled";
+
   if (isSwap(data)) {
-    const chain =
-      data.from_chain_name ??
-      data.from?.chainName ??
-      chainLabel(data.from_chain ?? data.from?.chain);
     if (hasApprove) {
       steps.push({
         key: "approve",
         label: "Allowed your token to be swapped",
-        completeAtPhase: 0,
+        done: true,
+        active: false,
       });
     }
     steps.push({
       key: "swap",
-      label: `Swapped on ${chain}`,
-      completeAtPhase: 3,
+      label: isComplete
+        ? `Swapped on ${fromChainName}`
+        : `Swapping on ${fromChainName}`,
+      done: isComplete,
+      active: !isComplete,
     });
     return steps;
   }
@@ -191,21 +252,24 @@ function buildSteps(data: BridgeProgressData): DisplayStep[] {
     steps.push({
       key: "approve",
       label: "Approved the bridge to move your token",
-      completeAtPhase: 0,
+      done: true,
+      active: false,
     });
   }
 
   steps.push({
     key: "burn",
-    label: `Sent from ${data.from_chain_name ?? chainLabel(data.from_chain)}`,
-    completeAtPhase: 1,
+    label: `Sent from ${fromChainName}`,
+    done: isComplete || current > 0,
+    active: !isComplete && current === 0,
   });
 
   const range = data.duration_range_seconds;
   steps.push({
     key: "attestation",
     label: "Waiting for the transfer to be confirmed",
-    completeAtPhase: 2,
+    done: isComplete || current > 1,
+    active: !isComplete && current === 1,
     hint: range
       ? `Usually ${Math.round(range[0] / 60)} to ${Math.round(range[1] / 60)} minutes`
       : "This is the slowest step and can take several minutes",
@@ -213,31 +277,21 @@ function buildSteps(data: BridgeProgressData): DisplayStep[] {
 
   steps.push({
     key: "mint",
-    label: `Delivered on ${data.to_chain_name ?? chainLabel(data.to_chain)}`,
-    completeAtPhase: 3,
+    label: `Delivered on ${toChainName}`,
+    done: isComplete,
+    active: !isComplete && current === 2,
   });
 
   return steps;
 }
 
-function StepRow({
-  step,
-  current,
-  settled,
-}: {
-  step: DisplayStep;
-  current: number;
-  settled: boolean;
-}) {
-  const done = settled || current > step.completeAtPhase;
-  const active = !done && current === step.completeAtPhase;
-
+function StepRow({ step }: { step: DisplayStep }) {
   return (
     <View className="flex-row items-start gap-2 py-1">
       <View className="pt-0.5">
-        {done ? (
+        {step.done ? (
           <Check size={14} color={SUCCESS_GREEN} />
-        ) : active ? (
+        ) : step.active ? (
           <Clock size={14} color={BRAND_RED} />
         ) : (
           <CircleDashed size={14} color="#d1d5db" />
@@ -246,16 +300,16 @@ function StepRow({
       <View className="flex-1">
         <Text
           className={`text-xs ${
-            done
+            step.done
               ? "text-light-matte-black/60"
-              : active
+              : step.active
                 ? "font-semibold text-light-matte-black"
                 : "text-gray-400"
           }`}
         >
           {step.label}
         </Text>
-        {active && step.hint ? (
+        {step.active && step.hint ? (
           <Text className="text-[10px] text-gray-400 mt-0.5">{step.hint}</Text>
         ) : null}
       </View>
@@ -328,6 +382,107 @@ const BridgeProgressCard: React.FC<
     blockchains,
     input as Record<string, unknown>,
   );
+
+  const rawData = output?.data ?? {};
+  const inputRecord = input as Record<string, unknown> | undefined;
+  const rawDataRecord = rawData as Record<string, unknown> | undefined;
+
+  const fromChain =
+    rawData.from_chain ??
+    rawData.from?.chain ??
+    (rawDataRecord?.fromChain as string | undefined) ??
+    (rawData.from?.token?.caip19
+      ? (chainOfAsset(rawData.from.token.caip19) ?? undefined)
+      : undefined) ??
+    input?.from_chain ??
+    (inputRecord?.fromChain as string | undefined) ??
+    (input?.from_asset
+      ? (chainOfAsset(input.from_asset) ?? undefined)
+      : undefined) ??
+    (typeof inputRecord?.fromAsset === "string"
+      ? (chainOfAsset(inputRecord.fromAsset) ?? undefined)
+      : undefined);
+
+  const toChain =
+    rawData.to_chain ??
+    rawData.to?.chain ??
+    (rawDataRecord?.toChain as string | undefined) ??
+    (rawData.to?.token?.caip19
+      ? (chainOfAsset(rawData.to.token.caip19) ?? undefined)
+      : undefined) ??
+    input?.to_chain ??
+    (inputRecord?.toChain as string | undefined) ??
+    (input?.to_asset
+      ? (chainOfAsset(input.to_asset) ?? undefined)
+      : undefined) ??
+    (typeof inputRecord?.toAsset === "string"
+      ? (chainOfAsset(inputRecord.toAsset) ?? undefined)
+      : undefined);
+
+  const fromChainFallback =
+    rawData.from_chain_name ??
+    rawData.from?.chainName ??
+    (rawDataRecord?.fromChainName as string | undefined) ??
+    (inputRecord?.from_chain_name as string | undefined) ??
+    (inputRecord?.fromChainName as string | undefined);
+
+  const toChainFallback =
+    rawData.to_chain_name ??
+    rawData.to?.chainName ??
+    (rawDataRecord?.toChainName as string | undefined) ??
+    (inputRecord?.to_chain_name as string | undefined) ??
+    (inputRecord?.toChainName as string | undefined);
+
+  const fromChainName = resolveChainName(
+    fromChain,
+    fromChainFallback,
+    blockchains,
+    "Source chain",
+  );
+
+  const toChainName = resolveChainName(
+    toChain,
+    toChainFallback,
+    blockchains,
+    "Destination chain",
+  );
+
+  const sourceTxHash = (
+    rawData.source_tx_hash ??
+    input?.source_tx_hash ??
+    (rawDataRecord?.sourceTxHash as string | undefined)
+  )?.trim();
+
+  const rawProvider =
+    rawData.provider ??
+    (rawData.bridge?.key === "cctp" ? "circle-cctp" : rawData.bridge?.key);
+  const provider = rawProvider === "circle" ? "circle-cctp" : rawProvider;
+
+  const initialStatus: TBridgeStatus | undefined =
+    rawData.outcome !== undefined || rawData.phase !== undefined
+      ? {
+          outcome: rawData.outcome ?? null,
+          phase: rawData.phase ?? "pending_source",
+          currentStepKey: rawData.current_step_key,
+          sourceTxHash: rawData.source_tx_hash,
+          destinationTxHash: rawData.destination_tx_hash,
+          receivedToken: rawData.received_token,
+          receivedAmountRaw: rawData.received_amount_raw,
+          refundChain: rawData.refund_chain as any,
+          explorerUrl: rawData.explorer_url,
+        }
+      : undefined;
+
+  const { status: liveStatus } = useBridgeStatus(sourceTxHash, {
+    fromChain,
+    toChain,
+    provider,
+    initialStatus,
+  });
+
+  const destinationTxHash =
+    liveStatus?.destinationTxHash ?? rawData.destination_tx_hash;
+
   // The user's own pick overrides the model's `to_address`, which is built
   // from conversation history and still names the previous wallet right
   // after a switch. The executor resolves the SAME way, so approving what
@@ -472,16 +627,43 @@ const BridgeProgressCard: React.FC<
     );
   }
 
-  const data = output.data ?? {};
-  const outcome = data.outcome ?? null;
-  const settled = data.phase === "settled";
+  const outcome =
+    liveStatus?.outcome !== undefined
+      ? liveStatus.outcome
+      : (rawData.outcome ?? null);
+  const phase = liveStatus?.phase ?? rawData.phase ?? "pending_source";
+
+  const data: BridgeProgressData = {
+    ...rawData,
+    from_chain: fromChain,
+    to_chain: toChain,
+    from_chain_name: fromChainName,
+    to_chain_name: toChainName,
+    source_tx_hash: sourceTxHash,
+    destination_tx_hash: destinationTxHash,
+    outcome,
+    phase,
+    current_step_key: liveStatus?.currentStepKey ?? rawData.current_step_key,
+    received_token: liveStatus?.receivedToken ?? rawData.received_token,
+    received_amount_raw:
+      liveStatus?.receivedAmountRaw ?? rawData.received_amount_raw,
+    refund_chain: liveStatus?.refundChain ?? rawData.refund_chain,
+    explorer_url: liveStatus?.explorerUrl ?? rawData.explorer_url,
+    claim_required: liveStatus
+      ? Boolean(liveStatus.destinationAction)
+      : (rawData.claim_required ?? false),
+  };
+
   const current = phaseIndex(data.phase);
-  const steps = buildSteps(data);
+  const steps = buildSteps(data, fromChainName, toChainName);
 
   const swap = isSwap(data);
+  const refundChainName = data.refund_chain
+    ? resolveChainName(data.refund_chain, undefined, blockchains, fromChainName)
+    : undefined;
   const copy = outcomeCopy(outcome, {
     receivedSymbol: data.received_token?.symbol,
-    refundChainLabel: chainLabel(data.refund_chain),
+    refundChainLabel: refundChainName,
     swap,
   });
 
@@ -502,6 +684,17 @@ const BridgeProgressCard: React.FC<
         : outcome === "partial" || outcome === "refunded"
           ? WARN_AMBER
           : MUTED;
+
+  const sourceExplorerUrl = resolveExplorerTxUrl(
+    fromChain,
+    sourceTxHash,
+    blockchains,
+  );
+  const destExplorerUrl = resolveExplorerTxUrl(
+    toChain,
+    destinationTxHash,
+    blockchains,
+  );
 
   return (
     <View className={`my-1.5 rounded-2xl border px-4 py-3.5 ${borderTone}`}>
@@ -542,12 +735,7 @@ const BridgeProgressCard: React.FC<
       {!outcome || outcome === "completed" ? (
         <View className="mt-2">
           {steps.map((step) => (
-            <StepRow
-              key={step.key}
-              step={step}
-              current={current}
-              settled={settled && outcome === "completed"}
-            />
+            <StepRow key={step.key} step={step} />
           ))}
         </View>
       ) : null}
@@ -555,15 +743,16 @@ const BridgeProgressCard: React.FC<
       {/* Both tx hashes surfaced (§7.7). */}
       <View className="mt-1.5 border-t border-light-matte-black/5 pt-1.5">
         <TxLink
-          label={`Sent on ${data.from_chain_name ?? chainLabel(data.from_chain)}`}
-          hash={data.source_tx_hash}
-          url={data.explorer_url}
-          chain={data.from_chain}
+          label={`Sent on ${fromChainName}`}
+          hash={sourceTxHash}
+          url={data.explorer_url ?? sourceExplorerUrl}
+          chain={fromChain}
         />
         <TxLink
-          label={`Received on ${data.to_chain_name ?? chainLabel(data.to_chain)}`}
-          hash={data.destination_tx_hash}
-          chain={data.to_chain}
+          label={`Received on ${toChainName}`}
+          hash={destinationTxHash}
+          url={destExplorerUrl}
+          chain={toChain}
         />
       </View>
 
@@ -572,20 +761,26 @@ const BridgeProgressCard: React.FC<
         forever (§7.7). Once we are past the source confirmation and still
         unsettled, offer the user a way to act.
       */}
-      {!outcome && current >= 1 && onUserPrompt ? (
+      {!outcome && data.claim_required ? (
+        <Text className="text-sm text-light-matte-black/80 mt-2">
+          Your funds are ready. Receive them with your {toChainName} wallet to
+          finish this transfer. Until then they stay safe and waiting.
+        </Text>
+      ) : null}
+      {!outcome && data.claim_required && onUserPrompt ? (
         <Pressable
           onPress={() => {
             tapFeedback();
             onUserPrompt(
-              `Check the status of my bridge transfer ${data.source_tx_hash ?? ""}`.trim(),
+              `Receive my bridged funds on ${toChainName} for transfer ${sourceTxHash ?? ""}`.trim(),
             );
           }}
           accessibilityRole="button"
-          accessibilityLabel="Check transfer status"
+          accessibilityLabel="Receive funds"
           className="mt-2 self-start rounded-xl border-2 border-light-primary-red bg-light-primary-red/10 px-3 py-1.5 active:opacity-70"
         >
           <Text className="text-[11px] font-bold text-light-matte-black">
-            Check status
+            Receive on {toChainName}
           </Text>
         </Pressable>
       ) : null}

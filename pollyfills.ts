@@ -97,6 +97,17 @@ import "./node_modules/es-toolkit/dist/compat/compat.js";
 import "./node_modules/es-toolkit/dist/compat/compat.mjs";
 import "./node_modules/es-toolkit/dist/compat/index.js";
 import "./node_modules/es-toolkit/dist/compat/index.mjs";
+// Arc App Kit / Circle bridge stack (`@circle-fin/app-kit` pulls `@ethersproject/units`
+// -> `@ethersproject/bignumber`). `BigNumber.prototype.toString` and
+// `FixedNumber.prototype.toString` assign prototype properties under strict
+// mode that shadow Object.prototype and throw against the frozen prototype.
+// Both builds pre-loaded by exact path.
+import "./node_modules/@ethersproject/bignumber/lib/bignumber.js";
+import "./node_modules/@ethersproject/bignumber/lib/fixednumber.js";
+import "./node_modules/@ethersproject/bignumber/lib/index.js";
+import "./node_modules/@ethersproject/bignumber/lib.esm/bignumber.js";
+import "./node_modules/@ethersproject/bignumber/lib.esm/fixednumber.js";
+import "./node_modules/@ethersproject/bignumber/lib.esm/index.js";
 
 // Native-JSI crypto — replaces the pure-JS fallbacks viem / @scure / @noble
 // use (secp256k1, sha256, keccak256, pbkdf2, HMAC, etc.) with C++ via JSI.
@@ -467,6 +478,24 @@ if (__DEV__) {
     ],
     ["bn.js", () => require("bn.js")],
     ["posthog-react-native", () => require("posthog-react-native")],
+    [
+      "@ethersproject/bignumber/lib/bignumber",
+      () => require("./node_modules/@ethersproject/bignumber/lib/bignumber.js"),
+    ],
+    [
+      "@ethersproject/bignumber/lib/fixednumber",
+      () =>
+        require("./node_modules/@ethersproject/bignumber/lib/fixednumber.js"),
+    ],
+    [
+      "@ethersproject/bignumber/lib/index",
+      () => require("./node_modules/@ethersproject/bignumber/lib/index.js"),
+    ],
+    [
+      "@ethersproject/bignumber/lib.esm/bignumber",
+      () =>
+        require("./node_modules/@ethersproject/bignumber/lib.esm/bignumber.js"),
+    ],
   ];
   const missed: string[] = [];
   for (const [label, load] of canaries) {
