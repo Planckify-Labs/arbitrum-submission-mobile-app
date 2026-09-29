@@ -856,6 +856,16 @@ const BridgeQuoteCard: React.FC<
   const rate = effectiveRatePercent(quote.from?.amountUsd, quote.to?.amountUsd);
   const mechanism = mechanismLabel(quote.bridge?.mechanism);
 
+  // §7.1: USDC is native gas asset on Arc, not on other chains (e.g. Base, Ethereum, Solana).
+  // Only display the "You receive native USDC" badge when bridging to Arc (or when the destination asset is truly native).
+  const isArcDestination =
+    quote.to?.chain === "eip155:5042" ||
+    quote.to?.chain === "eip155:5042002" ||
+    Boolean(quote.to?.chainName?.toLowerCase().startsWith("arc"));
+  const showsNativeBadge =
+    Boolean(quote.receives_native_asset) &&
+    (quote.to?.token?.isNative === true || isArcDestination);
+
   return (
     <Shell>
       {/* §7.1 what am I moving */}
@@ -865,8 +875,8 @@ const BridgeQuoteCard: React.FC<
       </View>
       <AssetLine side={quote.to} caption="You receive" />
 
-      {/* §7.1 native asset confirmation */}
-      {quote.receives_native_asset ? (
+      {/* §7.1 native asset confirmation — shown only for Arc / native gas tokens */}
+      {showsNativeBadge ? (
         <View className="flex-row items-center gap-1 mt-1.5">
           <BadgeCheck size={12} color="#059669" />
           <Text className="text-[11px] font-semibold text-emerald-700">
