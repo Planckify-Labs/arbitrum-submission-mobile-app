@@ -121,7 +121,10 @@ const PinSetupModal: React.FC<PinSetupModalProps> = ({
     ];
 
     return numbers.map((row, rowIndex) => (
-      <View key={rowIndex} className="flex-row justify-around w-full my-2">
+      <View
+        key={rowIndex}
+        className="flex-row justify-around flex-1 my-2 gap-2"
+      >
         {row.map((num, colIndex) => {
           if (num === "") {
             return <View key={colIndex} className="w-16 h-16" />;
