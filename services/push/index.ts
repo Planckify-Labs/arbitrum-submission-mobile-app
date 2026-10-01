@@ -61,6 +61,10 @@ import {
   readPushRegistrationState,
   writePushRegistrationState,
 } from "@/services/push/pushRegistrationState";
+import {
+  isAppLocked,
+  subscribeAppLocked,
+} from "@/services/security/appLockState";
 import { walletConnectTransport } from "@/services/transports/walletconnect";
 
 /**
@@ -282,6 +286,29 @@ function scheduleTrailingRegistration(wallets: string[]): void {
 }
 
 /**
+ * Wallet list from a registration requested while the lock screen was up.
+ * Registration asks for the notification permission, and that system
+ * dialog must never appear over the lock screen: it reads as the app
+ * asking before the user has even got in. So a locked call parks its
+ * wallet list here and the unlock runs it, once.
+ */
+let walletsAwaitingUnlock: string[] | null = null;
+let unsubscribeUnlock: (() => void) | null = null;
+
+function registerAfterUnlock(wallets: string[]): void {
+  walletsAwaitingUnlock = wallets;
+  if (unsubscribeUnlock) return; // already waiting; it'll take the latest list
+  unsubscribeUnlock = subscribeAppLocked((locked) => {
+    if (locked) return;
+    unsubscribeUnlock?.();
+    unsubscribeUnlock = null;
+    const pending = walletsAwaitingUnlock;
+    walletsAwaitingUnlock = null;
+    if (pending) void registerForPushNotifications(pending);
+  });
+}
+
+/**
  * Request push permission, obtain an Expo push token, and POST it to
  * the backend. Idempotent — safe to call whenever the wallet list changes.
  * Returns true on success, false on any unrecoverable failure (so callers
@@ -296,6 +323,12 @@ function scheduleTrailingRegistration(wallets: string[]): void {
 export function registerForPushNotifications(
   wallets: string[],
 ): Promise<boolean> {
+  // Before the throttle on purpose: a parked call never counts as an
+  // attempt, so the unlock's call goes straight through.
+  if (isAppLocked()) {
+    registerAfterUnlock(wallets);
+    return Promise.resolve(false);
+  }
   if (inFlightRegistration) {
     scheduleTrailingRegistration(wallets);
     return inFlightRegistration;

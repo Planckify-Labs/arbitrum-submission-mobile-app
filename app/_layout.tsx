@@ -176,11 +176,19 @@ function InitializeApp({
 }) {
   const isRestoring = useIsRestoring();
   const { wallets, isLoading } = require("@/hooks/useWallet").useWallet();
+  // Boolean, not the path: the effect must re-run when a login flow
+  // leaves `/login`, not on every navigation.
+  const onLogin = usePathname() === "/login";
 
   useEffect(() => {
     if (isRestoring || isLoading) return;
 
     if (hasStoredWallets() && !didUnlockThisSession) {
+      // A first login (create / Google / passkey) saves its wallets while
+      // its progress popup is still up, then navigates home. Locking at
+      // the save would put the LockScreen over the login screen, so wait
+      // until the flow has left `/login`: the lock then lands on home.
+      if (onLogin) return;
       // Live posture, not the mirror `shouldLockAtBoot` was seeded from.
       // The splash stays up until this settles so neither branch shows
       // the wrong screen first.
@@ -209,6 +217,7 @@ function InitializeApp({
     isLoading,
     wallets.length,
     didUnlockThisSession,
+    onLogin,
     onShouldLock,
     onSkipLock,
   ]);
@@ -250,14 +259,21 @@ function AppShell() {
   // Re-register whenever the wallet list changes so new wallets are
   // subscribed immediately. walletKey is a stable string derived from
   // the address list — the effect only fires when addresses actually change.
+  //
+  // Not before the user has unlocked this session: registering asks for
+  // the notification permission, and a first login saves its wallets a
+  // moment BEFORE the LockScreen goes up, so "not locked yet" is not
+  // enough. `registerForPushNotifications` additionally parks any call
+  // made while the lock mirror is set (retry / foreground paths).
   const walletKey = wallets.map((w) => w.address).join(",");
   useEffect(() => {
     const addresses = wallets.map((w) => w.address);
     if (addresses.length === 0) return;
-    void registerForPushNotifications(addresses);
     syncWalletProperties(wallets);
+    if (!didUnlockThisSession) return;
+    void registerForPushNotifications(addresses);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [walletKey]);
+  }, [walletKey, didUnlockThisSession]);
 
   // Deep-link spec §4.8: drain the link inbox only after unlock. A
   // link that arrived behind the lock screen already pointed the
