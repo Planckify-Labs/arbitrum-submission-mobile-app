@@ -1,4 +1,5 @@
 import { ShoppingBag, Sparkles, Wallet } from "lucide-react-native";
+import { CHAIN_LOCKDOWN_ACTIVE } from "@/services/walletKit/chainSupport";
 
 export const ONBOARDING_SLIDE_DATA = [
   {
@@ -12,7 +13,9 @@ export const ONBOARDING_SLIDE_DATA = [
     features: [
       "Natural language transaction execution",
       "Optional wallet access, you decide what the agent can do",
-      "Multi-chain blockchain support",
+      CHAIN_LOCKDOWN_ACTIVE
+        ? "Arbitrum and Robinhood Chain support"
+        : "Multi-chain blockchain support",
     ],
   },
   {
@@ -21,12 +24,17 @@ export const ONBOARDING_SLIDE_DATA = [
     iconBgColor: "#ecfdf5",
     accentColor: "#059669",
     title: "On-Chain Actions",
-    description:
-      "Send tokens, check balances, and monitor gas fees across multiple chains.",
+    description: CHAIN_LOCKDOWN_ACTIVE
+      ? "Send tokens, check balances, and monitor gas fees on Arbitrum and Robinhood Chain."
+      : "Send tokens, check balances, and monitor gas fees across multiple chains.",
     features: [
-      "Native tokens: ETH, MATIC, BNB",
-      "ERC-20: USDT, USDC, DAI & more",
-      "NFT transfers (ERC-721)",
+      CHAIN_LOCKDOWN_ACTIVE
+        ? "Native token: ETH"
+        : "Native tokens: ETH, MATIC, BNB",
+      CHAIN_LOCKDOWN_ACTIVE
+        ? "Stablecoin: USDG & more"
+        : "ERC-20: USDT, USDC, DAI & more",
+      ...(CHAIN_LOCKDOWN_ACTIVE ? [] : ["NFT transfers (ERC-721)"]),
       "Real-time gas estimates",
     ],
   },

@@ -3,6 +3,7 @@ import React, { useMemo } from "react";
 import { Text, TouchableOpacity, View } from "react-native";
 import { useRecommendations } from "@/hooks/queries/useProducts";
 import { useAddressBook } from "@/hooks/useAddressBook";
+import { CHAIN_LOCKDOWN_ACTIVE } from "@/services/walletKit/chainSupport";
 
 export interface QuickPromptsProps {
   onSelectPrompt: (prompt: string) => void;
@@ -24,7 +25,7 @@ export default function QuickPrompts({ onSelectPrompt }: QuickPromptsProps) {
       ? [
           {
             id: "transfer-1",
-            prompt: `Transfer USDT to ${latestContact.label}`,
+            prompt: `Transfer ${CHAIN_LOCKDOWN_ACTIVE ? "USDG" : "USDT"} to ${latestContact.label}`,
           },
         ]
       : [];
@@ -41,7 +42,12 @@ export default function QuickPrompts({ onSelectPrompt }: QuickPromptsProps) {
     const staticPrompts = [
       { id: "static-1", prompt: "how many points do i have?" },
       { id: "static-2", prompt: "items i can redeem with my points" },
-      { id: "static-3", prompt: "Swap 1 ETH for USDC" },
+      {
+        id: "static-3",
+        prompt: CHAIN_LOCKDOWN_ACTIVE
+          ? "Swap 0.01 ETH for USDG"
+          : "Swap 1 ETH for USDC",
+      },
       { id: "static-4", prompt: "Set up a DeFi strategy" },
     ];
 

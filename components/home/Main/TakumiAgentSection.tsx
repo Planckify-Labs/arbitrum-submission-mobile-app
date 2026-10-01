@@ -160,17 +160,19 @@ const DEFAULT_CAPABILITIES: Capability[] = [
   {
     id: "pay",
     label: "Pay & Send",
-    sample: "Send 50 USDT",
-    prompt: "Send 50 USDT to a friend",
+    sample: CHAIN_LOCKDOWN_ACTIVE ? "Send 50 USDG" : "Send 50 USDT",
+    prompt: CHAIN_LOCKDOWN_ACTIVE
+      ? "Send 50 USDG to a friend"
+      : "Send 50 USDT to a friend",
     icon: Send,
     variant: "red",
   },
   {
     id: "swap",
     label: "Swap",
-    sample: CHAIN_LOCKDOWN_ACTIVE ? "ETH → USDC" : "SUI → USDC",
+    sample: CHAIN_LOCKDOWN_ACTIVE ? "ETH → USDG" : "SUI → USDC",
     prompt: CHAIN_LOCKDOWN_ACTIVE
-      ? "Swap 0.01 ETH for USDC"
+      ? "Swap 0.01 ETH for USDG"
       : "Swap 4 SUI for USDC",
     icon: Repeat,
     variant: "dark",
@@ -178,8 +180,10 @@ const DEFAULT_CAPABILITIES: Capability[] = [
   {
     id: "earn",
     label: "Earn yield",
-    sample: "earn on USDC",
-    prompt: "Earn yield on my idle USDC/USDT",
+    sample: CHAIN_LOCKDOWN_ACTIVE ? "earn on USDG" : "earn on USDC",
+    prompt: CHAIN_LOCKDOWN_ACTIVE
+      ? "Earn yield on my idle USDG"
+      : "Earn yield on my idle USDC/USDT",
     icon: TrendingUp,
     variant: "light",
   },
@@ -237,7 +241,9 @@ const QUICK_PROMPTS: {
 // Default: the auto-earn-yield pitch ("Grow your idle USDC, hands-free").
 const SPOTLIGHT_PROMPT = HACKATHON_BUILD
   ? "Send 50 AUSD to my mom"
-  : "Earn yield on my idle USDC";
+  : CHAIN_LOCKDOWN_ACTIVE
+    ? "Earn yield on my idle USDG"
+    : "Earn yield on my idle USDC";
 
 const SPOTLIGHT = HACKATHON_BUILD
   ? {
@@ -248,7 +254,9 @@ const SPOTLIGHT = HACKATHON_BUILD
     }
   : {
       badge: "~0.1 - 7% APY",
-      headline: "Grow your idle\nUSDC, hands-free",
+      headline: CHAIN_LOCKDOWN_ACTIVE
+        ? "Grow your idle\nUSDG, hands-free"
+        : "Grow your idle\nUSDC, hands-free",
       tagline: "Auto-earn yield · I cover the gas.",
       Icon: TrendingUp,
     };
