@@ -1,5 +1,5 @@
 import React, { useRef, useState } from "react";
-import { Animated, FlatList, ListRenderItemInfo, Text } from "react-native";
+import { Animated, FlatList, ListRenderItemInfo } from "react-native";
 import { SystemBars } from "react-native-edge-to-edge";
 import {
   SafeAreaView,
@@ -10,6 +10,7 @@ import PromotionBanner from "@/components/service/PromotionBanner";
 import ServiceHeader from "@/components/service/ServiceHeader";
 import ServiceScreenSkeleton from "@/components/service/ServiceScreenSkeleton";
 import ServiceSectionContainer from "@/components/service/ServiceSectionContainer";
+import ServiceStateMessage from "@/components/service/ServiceStateMessage";
 import { useProductsByCategories } from "@/hooks/queries/useProducts";
 
 type ListItem =
@@ -49,6 +50,8 @@ export default function ServiceScreen() {
     data: productsByCategories,
     isLoading,
     error,
+    refetch,
+    isRefetching,
   } = useProductsByCategories();
 
   const { bottom } = useSafeAreaInsets();
@@ -155,13 +158,35 @@ export default function ServiceScreen() {
     );
   }
 
-  if (error) {
+  // Nothing to browse at all (request failed, or the catalog came back with
+  // no products). Keep the header so the user can still go back, and show
+  // fixed copy only: the failure itself never reaches the screen.
+  const hasCatalog = productsByCategories?.some(
+    (categoryData) => (categoryData.products?.length ?? 0) > 0,
+  );
+  if (error || !hasCatalog) {
     return (
-      <SafeAreaView className="flex-1 bg-light-main-container items-center justify-center">
-        <Text>Failed to load services.</Text>
-      </SafeAreaView>
+      <>
+        <SystemBars style="dark" />
+        <SafeAreaView
+          className="flex-1 bg-light-main-container"
+          edges={["top"]}
+        >
+          <ServiceHeader title="Redeem" />
+          <ServiceStateMessage
+            variant={error ? "error" : "empty"}
+            onRetry={() => {
+              void refetch();
+            }}
+            isRetrying={isRefetching}
+          />
+        </SafeAreaView>
+      </>
     );
   }
+
+  // Catalog exists but the search filtered every section out.
+  const hasSections = serviceList.some((item) => item.type === "section");
 
   return (
     <>
@@ -175,6 +200,9 @@ export default function ServiceScreen() {
           }
           showsVerticalScrollIndicator={false}
           stickyHeaderIndices={[1]}
+          ListFooterComponent={
+            hasSections ? null : <ServiceStateMessage variant="noResults" />
+          }
           contentContainerStyle={{ paddingBottom: bottomOffset }}
           onScroll={Animated.event(
             [{ nativeEvent: { contentOffset: { y: scrollY } } }],
