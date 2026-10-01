@@ -42,6 +42,7 @@ import {
   truncateAddress as truncateAddressUtil,
 } from "../../../utils/walletUtils.ts";
 import { buildAndSendSuiCoinTransfer } from "../../chains/sui/coinTransferService.ts";
+import { estimateSuiTransferFeeMist } from "../../chains/sui/estimateTransferFee.ts";
 import {
   SuiClosedLoopPolicyDeniedError,
   SuiRegulatedCoinDeniedError,
@@ -60,8 +61,10 @@ import type {
   CreateWalletFromMnemonicParams,
   CreateWalletFromPrivateKeyParams,
   EstimateMaxTransferableArgs,
+  EstimateTransferFeeArgs,
   NativeTransferArgs,
   TokenTransferArgs,
+  TransferFeeEstimate,
   TruncateAddressOptions,
   WalletKitAdapter,
 } from "../types.ts";
@@ -456,6 +459,28 @@ export function createSuiWalletKit(): WalletKitAdapter {
       balance,
     }: EstimateMaxTransferableArgs): Promise<bigint> {
       return balance > MAX_GAS_BUDGET_MIST ? balance - MAX_GAS_BUDGET_MIST : 0n;
+    },
+
+    async estimateTransferFee({
+      chain,
+      from,
+      to,
+      amount,
+      token,
+    }: EstimateTransferFeeArgs): Promise<TransferFeeEstimate> {
+      assertSui(chain);
+      const client = new SuiJsonRpcClient({
+        transport: createSuiGrpcJsonRpcTransport(chain.network),
+        network: chain.network,
+      });
+      const mist = await estimateSuiTransferFeeMist({
+        client,
+        from,
+        to,
+        amount,
+        coinType: token?.contractAddress,
+      });
+      return { feeNative: mist, maxFeeNative: mist };
     },
 
     // ── Sui-PTB submission (Intent Engine + future Sui DeFi adapters) ──

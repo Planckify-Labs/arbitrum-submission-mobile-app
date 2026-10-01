@@ -15,7 +15,11 @@
  * does the row → config mapping like every other chain consumer.
  */
 
-import { type QueryObserverResult, useQueries } from "@tanstack/react-query";
+import {
+  type QueryObserverResult,
+  useQueries,
+  useQuery,
+} from "@tanstack/react-query";
 import { useCallback, useMemo } from "react";
 import type { TBlockchain } from "@/api/types/blockchain";
 import type { ChainConfig } from "@/constants/configs/chainConfig";
@@ -32,7 +36,7 @@ import {
 } from "./useWallet.helpers";
 
 /** Capabilities change rarely; one refetch an hour is plenty. */
-const FEE_TOKENS_STALE_TIME = 60 * 60 * 1000;
+export const FEE_TOKENS_STALE_TIME = 60 * 60 * 1000;
 
 interface ChainProbe extends GasFeeTokenChainRef {
   chain: ChainConfig;
@@ -56,7 +60,7 @@ function toProbe(row: TBlockchain): ChainProbe | null {
   };
 }
 
-async function fetchFeeTokens(chain: ChainConfig): Promise<FeeToken[]> {
+export async function fetchFeeTokens(chain: ChainConfig): Promise<FeeToken[]> {
   const provider = gasAbstractionRegistry.resolveProvider(chain);
   if (!provider) return [];
   try {
@@ -111,4 +115,20 @@ export function useGasFeeTokenOptions() {
     probedChainCount: probes.length,
     isLoading: chainsLoading || anyPending,
   };
+}
+
+/**
+ * Fee tokens the relayer accepts on ONE chain (the send screen's active
+ * one). Shares the `["gasFeeTokens", chainKey]` cache entry with
+ * `useGasFeeTokenOptions`, so Gas Settings having been opened costs
+ * nothing here. `null` until known; `[]` when the chain isn't served.
+ */
+export function useChainFeeTokens(chain: ChainConfig): FeeToken[] | null {
+  const { data } = useQuery({
+    queryKey: ["gasFeeTokens", chainCacheKey(chain)],
+    queryFn: () => fetchFeeTokens(chain),
+    staleTime: FEE_TOKENS_STALE_TIME,
+    enabled: !!gasAbstractionRegistry.resolveProvider(chain),
+  });
+  return data ?? null;
 }

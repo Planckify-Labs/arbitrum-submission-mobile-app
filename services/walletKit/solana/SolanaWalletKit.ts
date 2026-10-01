@@ -40,7 +40,11 @@ import {
   truncateAddress as truncateAddressUtil,
 } from "../../../utils/walletUtils.ts";
 import { bytesToBase58 } from "../../chains/solana/codec.ts";
-import { buildAndSendSplTransfer } from "../../chains/solana/splTransferService.ts";
+import {
+  buildAndSendSplTransfer,
+  estimateSplTransferFeeLamports,
+  SOLANA_BASE_FEE_LAMPORTS,
+} from "../../chains/solana/splTransferService.ts";
 import {
   buildAndSendSolTransfer,
   getSolanaBalance,
@@ -54,10 +58,12 @@ import type {
   CreateWalletFromMnemonicParams,
   CreateWalletFromPrivateKeyParams,
   EstimateMaxTransferableArgs,
+  EstimateTransferFeeArgs,
   NativeTransferArgs,
   SendAnchorInstructionArgs,
   SignX402SvmPaymentArgs,
   TokenTransferArgs,
+  TransferFeeEstimate,
   TruncateAddressOptions,
   WalletKitAdapter,
 } from "../types.ts";
@@ -329,6 +335,22 @@ export function createSolanaWalletKit(): WalletKitAdapter {
       return balance > FEE_RESERVE_LAMPORTS
         ? balance - FEE_RESERVE_LAMPORTS
         : 0n;
+    },
+
+    async estimateTransferFee({
+      chain,
+      to,
+      token,
+    }: EstimateTransferFeeArgs): Promise<TransferFeeEstimate> {
+      assertSolana(chain);
+      const lamports = token
+        ? await estimateSplTransferFeeLamports({
+            rpc: createSolanaRpc(chain.rpcUrl),
+            to,
+            mint: token.contractAddress,
+          })
+        : SOLANA_BASE_FEE_LAMPORTS;
+      return { feeNative: lamports, maxFeeNative: lamports };
     },
 
     // ── Path B-SVM x402 signer (spec §5.2.1, §5.5, milestone M6) ────

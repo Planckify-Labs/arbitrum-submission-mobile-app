@@ -36,6 +36,7 @@ import ChainSelector from "@/components/common/ChainSelector";
 import LoadinngSpinnerPopup from "@/components/common/LoadinngSpinnerPopup";
 import OptimizedImage from "@/components/common/OptimizedImage";
 import PinConfirmationModal from "@/components/common/PinConfirmationModal";
+import SingleLoadingSekeleton from "@/components/common/SingleLoadingSekeleton";
 import { ProvenanceBanner } from "@/components/deeplinks/ProvenanceBanner";
 import RecipientPickerModal from "@/components/send/RecipientPickerModal";
 import TokenSelectorModal from "@/components/wallet/TokenSelectorModal";
@@ -43,16 +44,40 @@ import WalletSelectorModal from "@/components/wallet/WalletSelectorModal";
 import { useBlockchains } from "@/hooks/queries/useBlockchains";
 import { useTokens } from "@/hooks/queries/useTokens";
 import { useAddressBook } from "@/hooks/useAddressBook";
+import { useChainFeeTokens } from "@/hooks/useGasFeeTokenOptions";
 import { usePreferredGasToken } from "@/hooks/usePreferredGasToken";
+import { useTransferFee } from "@/hooks/useTransferFee";
 import { useWallet } from "@/hooks/useWallet";
 import { buildChainConfigFromBlockchain } from "@/hooks/useWallet.helpers";
 import { toChainTag } from "@/services/analytics/chainTag";
 import { track } from "@/services/analytics/posthog";
 import type { Provenance } from "@/services/deeplinks/types";
-import { classifySendError, sendErrorCopy } from "@/services/errors/sendErrors";
-import { pollRelayerTaskHash } from "@/services/gasAbstraction/pollTaskStatus";
+import {
+  classifySendError,
+  type SendErrorDetail,
+  sendErrorCopy,
+} from "@/services/errors/sendErrors";
+import {
+  pollRelayerTaskHash,
+  RelayerTaskTimeoutError,
+} from "@/services/gasAbstraction/pollTaskStatus";
 import { resolveGasPayment } from "@/services/gasAbstraction/resolveGasPayment";
+import {
+  feeTokenSymbolMatches,
+  isNativeGasPreference,
+} from "@/services/gasAbstraction/types";
+import {
+  checkNativeFeeCoverage,
+  type FeeCoverage,
+  refineSendErrorCode,
+} from "@/services/send/feeCoverage";
+import {
+  decimalsFromOneUnit,
+  formatFeeAmount,
+} from "@/services/send/formatFee";
+import { otherChainNameForAddress } from "@/services/send/recipientHint";
 import { recordTransfer } from "@/services/transfers/transferRecordOutbox";
+import { walletKitRegistry } from "@/services/walletKit/registry";
 import { classifySuiRecipient } from "@/utils/walletUtils";
 
 /**
@@ -94,6 +119,12 @@ function formatTokenAtoms(raw: bigint, decimals: number): string {
   const fracStr = frac.toString().padStart(decimals, "0");
   return `${whole.toString()}.${fracStr}`.replace(/\.?0+$/, "") || "0";
 }
+
+/** Addresses never contain whitespace; a pasted or autocompleted space makes a valid one fail the kit's strict check. */
+const stripWhitespace = (t: string) => t.replace(/\s/g, "");
+
+/** Matches the fee quote's refresh cadence (`useTransferFee`). */
+const BALANCE_REFRESH_MS = 12_000;
 
 export default function SendScreen() {
   const {
@@ -375,6 +406,160 @@ export default function SendScreen() {
     [balanceDisplay],
   );
 
+  // ── Live network fee ────────────────────────────────────────────
+  const isTokenSend =
+    selectedToken?.isNativeCurrency === false &&
+    !!selectedToken.contractAddress;
+  const nativeDecimals = useMemo(
+    () =>
+      kitMatchesChain
+        ? decimalsFromOneUnit(kit.parseNativeAmount("1", activeChain))
+        : 18,
+    [kit, kitMatchesChain, activeChain],
+  );
+  // Amount in the smallest unit of whatever is being sent; null while it
+  // is empty or not a number yet (the fee is still quoted for a nominal
+  // amount, see `useTransferFee`).
+  const amountRaw = useMemo(() => {
+    if (!kitMatchesChain || !amount || !(parseFloat(amount) > 0)) return null;
+    try {
+      return isTokenSend
+        ? parseUnits(amount, selectedToken?.decimals ?? 18)
+        : kit.parseNativeAmount(amount, activeChain);
+    } catch {
+      return null;
+    }
+  }, [kit, kitMatchesChain, activeChain, amount, isTokenSend, selectedToken]);
+  const validRecipient = useMemo(
+    () =>
+      kitMatchesChain && recipient && kit.validateAddress(recipient)
+        ? recipient
+        : null,
+    [kit, kitMatchesChain, recipient],
+  );
+  const fee = useTransferFee({
+    kit,
+    chain: activeChain,
+    wallet: activeWallet,
+    recipient: validRecipient,
+    amountRaw,
+    token: selectedToken,
+    nativeBalance: balance,
+    preferredGasToken,
+    enabled: kitMatchesChain && !isLoadingBalance,
+  });
+  const feeQuote = fee.quote;
+  const formatNativeFee = useCallback(
+    (raw: bigint) => `${formatFeeAmount(raw, nativeDecimals)} ${nativeSymbol}`,
+    [nativeDecimals, nativeSymbol],
+  );
+  const feeDisplay = useMemo(() => {
+    if (!feeQuote) return null;
+    return feeQuote.mode === "native"
+      ? `~${formatNativeFee(feeQuote.feeNative)}`
+      : `~${formatFeeAmount(feeQuote.feeAtoms, feeQuote.decimals)} ${feeQuote.symbol}`;
+  }, [feeQuote, formatNativeFee]);
+
+  // Which coin the fee will actually be charged in, so the user always
+  // sees it when stablecoin gas is on: the resolved token once quoted, the
+  // chosen one while it loads, and an explicit note when it can't be used
+  // and the fee falls back to the native coin.
+  const prefersStablecoin = !isNativeGasPreference(preferredGasToken);
+  const feePayToken =
+    feeQuote && feeQuote.mode !== "native"
+      ? feeQuote.symbol
+      : feeQuote || !prefersStablecoin
+        ? nativeSymbol
+        : preferredGasToken;
+  const chainFeeTokens = useChainFeeTokens(activeChain);
+  const acceptedHere = chainFeeTokens?.map((t) => t.symbol) ?? null;
+  const preferredAcceptedHere =
+    acceptedHere?.some((sym) =>
+      feeTokenSymbolMatches(sym, preferredGasToken),
+    ) ?? null;
+  const networkName = activeBackendChain?.name ?? "this network";
+  // A recipient that is typed but fails this chain's check. Name the
+  // likelier cause (an address for another network) when we can.
+  const wrongNetworkName = useMemo(
+    () =>
+      recipient && !validRecipient
+        ? otherChainNameForAddress(
+            recipient,
+            activeChain.namespace,
+            walletKitRegistry.getAll(),
+          )
+        : null,
+    [recipient, validRecipient, activeChain.namespace],
+  );
+  const recipientProblem =
+    recipient && !validRecipient
+      ? wrongNetworkName
+        ? `This looks like a ${wrongNetworkName} address, but you're sending on ${networkName}. Use an address for ${networkName}, or switch the network.`
+        : `This doesn't look like a valid address for ${networkName}.`
+      : null;
+
+  // Why the fee is in the native coin although a stablecoin is chosen.
+  // Name the actual cause: the user can only act on the right one.
+  const feeFallbackNote = (() => {
+    if (!prefersStablecoin || feeQuote?.mode !== "native") return null;
+    if (acceptedHere && acceptedHere.length === 0) {
+      return `Stablecoin fees aren't available on ${networkName}, so the fee is paid in ${nativeSymbol}.`;
+    }
+    if (preferredAcceptedHere === false && acceptedHere) {
+      return `${preferredGasToken} can't pay fees on ${networkName}. ${acceptedHere.join(" or ")} can: change it in Gas Settings. Until then the fee is paid in ${nativeSymbol}.`;
+    }
+    return isTokenSend
+      ? `${preferredGasToken} couldn't be used for this transfer, so the fee is paid in ${nativeSymbol}.`
+      : `Sending ${nativeSymbol} always pays its fee in ${nativeSymbol}. ${preferredGasToken} is used when you send a token.`;
+  })();
+
+  // Can the account pay? Native fees are checked against the balance read
+  // here; stablecoin fees were already checked by `resolveGasPayment`.
+  const feeCoverage = useMemo<FeeCoverage | null>(() => {
+    if (isLoadingBalance || !feeQuote) return null;
+    if (feeQuote.mode === "abstracted") return { covered: true };
+    if (feeQuote.mode === "blocked") {
+      return { covered: false, needed: feeQuote.needed, have: feeQuote.have };
+    }
+    return checkNativeFeeCoverage({
+      nativeBalance: balance,
+      maxFeeNative: feeQuote.maxFeeNative,
+      nativeValue: isTokenSend ? 0n : (amountRaw ?? 0n),
+    });
+  }, [isLoadingBalance, feeQuote, balance, isTokenSend, amountRaw]);
+
+  /** Copy for a fee shortfall, with real numbers. Same source for the inline notice and the failure alert. */
+  const feeShortfallCopy = useCallback(() => {
+    if (feeQuote?.mode === "blocked") {
+      return {
+        title: `Not enough ${feeQuote.symbol}`,
+        message: `You don't have enough ${feeQuote.symbol} to cover this transfer plus the network fee. Add ${feeQuote.symbol}, or switch the fee currency back to native in Gas Settings.`,
+      };
+    }
+    const detail: SendErrorDetail =
+      feeQuote?.mode === "native"
+        ? {
+            feeNeeded: formatNativeFee(feeQuote.maxFeeNative),
+            feeHave: formatNativeFee(balance),
+            leaveRoomForFee:
+              !isTokenSend &&
+              amountRaw !== null &&
+              amountRaw <= balance &&
+              balance >= feeQuote.maxFeeNative,
+          }
+        : {};
+    return sendErrorCopy("insufficient_fee", nativeSymbol, detail);
+  }, [
+    feeQuote,
+    formatNativeFee,
+    balance,
+    isTokenSend,
+    amountRaw,
+    nativeSymbol,
+  ]);
+  const feeShortfall =
+    feeCoverage && !feeCoverage.covered ? feeShortfallCopy() : null;
+
   const spinValue = React.useRef(new Animated.Value(0)).current;
 
   React.useEffect(() => {
@@ -397,26 +582,40 @@ export default function SendScreen() {
     outputRange: ["0deg", "360deg"],
   });
 
-  const fetchBalance = useCallback(async () => {
-    if (!activeWallet?.address) return;
-    // Skip the fetch while kit / chain namespaces are out of sync —
-    // useWallet's sync effect will align them and a follow-up render
-    // will retry.
-    if (!kitMatchesChain) return;
+  const fetchBalance = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      if (!activeWallet?.address) return;
+      // Skip the fetch while kit / chain namespaces are out of sync —
+      // useWallet's sync effect will align them and a follow-up render
+      // will retry.
+      if (!kitMatchesChain) return;
 
-    try {
-      setIsLoadingBalance(true);
-      const walletBalance = await kit.getNativeBalance(
-        activeWallet.address,
-        activeChain,
-      );
-      setBalance(walletBalance);
-    } catch (error) {
-      console.error("Error fetching balance:", error);
-    } finally {
-      setIsLoadingBalance(false);
-    }
-  }, [kit, kitMatchesChain, activeWallet?.address, activeChain]);
+      try {
+        // A background refresh must not flash the balance pill's spinner.
+        if (!opts?.silent) setIsLoadingBalance(true);
+        const walletBalance = await kit.getNativeBalance(
+          activeWallet.address,
+          activeChain,
+        );
+        setBalance(walletBalance);
+      } catch (error) {
+        if (__DEV__) console.error("Error fetching balance:", error);
+      } finally {
+        if (!opts?.silent) setIsLoadingBalance(false);
+      }
+    },
+    [kit, kitMatchesChain, activeWallet?.address, activeChain],
+  );
+
+  // The fee row re-prices on a timer, so the balance it is judged against
+  // has to keep up too: someone who tops up after seeing "not enough for
+  // the fee" must see that clear without leaving the screen.
+  useEffect(() => {
+    const id = setInterval(() => {
+      void fetchBalance({ silent: true });
+    }, BALANCE_REFRESH_MS);
+    return () => clearInterval(id);
+  }, [fetchBalance]);
 
   useEffect(() => {
     fetchBalance();
@@ -461,6 +660,16 @@ export default function SendScreen() {
         return;
       }
 
+      // Mid chain-switch the previous chain's token is still selected for
+      // one pass; reading it against the new chain hits a non-contract.
+      // The selection effect above swaps it, then this re-runs.
+      if (
+        activeBackendChain &&
+        selectedToken.blockchainId !== activeBackendChain.id
+      ) {
+        return;
+      }
+
       if (
         selectedToken.isNativeCurrency !== false ||
         !selectedToken.contractAddress
@@ -501,6 +710,7 @@ export default function SendScreen() {
     kit,
     activeChain,
     balanceAmountText,
+    activeBackendChain,
   ]);
 
   // Pre-flight receivability check — only runs when the kit exposes
@@ -551,7 +761,7 @@ export default function SendScreen() {
 
   const handlePasteAddress = async () => {
     const text = await Clipboard.getStringAsync();
-    if (text) setRecipient(text);
+    if (text) setRecipient(stripWhitespace(text));
   };
 
   const handleMaxAmount = useCallback(async () => {
@@ -606,6 +816,15 @@ export default function SendScreen() {
           return false;
         }
       }
+      if (recipientProblem) {
+        Alert.alert(
+          wrongNetworkName
+            ? "Wrong network for this address"
+            : "Check the recipient",
+          recipientProblem,
+        );
+        return false;
+      }
       Alert.alert(
         "Check the recipient",
         "That doesn't look like a valid recipient. Pick one from your contacts or paste it again.",
@@ -638,6 +857,13 @@ export default function SendScreen() {
       return false;
     }
 
+    // The live fee check already disables Send; this covers a tap that
+    // lands in the same frame the quote flips.
+    if (feeShortfall) {
+      Alert.alert(feeShortfall.title, feeShortfall.message);
+      return false;
+    }
+
     return true;
   }, [
     kit,
@@ -650,6 +876,9 @@ export default function SendScreen() {
     tokenBalance,
     nativeSymbol,
     assetReceivableWarning,
+    feeShortfall,
+    recipientProblem,
+    wrongNetworkName,
   ]);
 
   const handleSend = useCallback(async () => {
@@ -737,9 +966,22 @@ export default function SendScreen() {
           } catch (relayErr) {
             if (__DEV__) console.warn("Abstracted transfer failed:", relayErr);
             setIsLoading(false);
+            if (relayErr instanceof RelayerTaskTimeoutError) {
+              // May still land: say so instead of inviting a double send.
+              const copy = sendErrorCopy("still_processing");
+              Alert.alert(copy.title, copy.message);
+              return;
+            }
+            const relayCode = classifySendError(relayErr);
+            if (relayCode === "user_cancelled") return;
+            if (relayCode === "network" || relayCode === "pending_transfer") {
+              const copy = sendErrorCopy(relayCode, selectedToken.symbol);
+              Alert.alert(copy.title, copy.message);
+              return;
+            }
             Alert.alert(
               "Transfer failed",
-              `We couldn't send this transfer with the fee paid in ${feeSymbol}. Please try again, or switch the fee currency back to native in Gas Settings.`,
+              `We couldn't send this transfer with the fee paid in ${feeSymbol}. No money was sent. Please try again, or switch the fee currency back to native in Gas Settings.`,
             );
             return;
           }
@@ -847,15 +1089,24 @@ export default function SendScreen() {
       // Raw detail stays in dev logs; the user gets fixed copy that never
       // mentions gas / tokens / chains (services/errors/sendErrors.ts).
       if (__DEV__) console.error("Send transaction error:", error);
-      const code = classifySendError(error);
+      // A bare "rejected" is a fee shortfall when the live estimate already
+      // said the account couldn't cover the fee (Monad reports it that way).
+      const code = refineSendErrorCode(classifySendError(error), feeCoverage);
       if (code !== "user_cancelled") {
-        const copy = sendErrorCopy(
-          code,
-          selectedToken && selectedToken.isNativeCurrency === false
-            ? selectedToken.symbol
-            : nativeSymbol,
-        );
+        const copy =
+          code === "insufficient_fee" && feeShortfall
+            ? feeShortfall
+            : sendErrorCopy(
+                code,
+                selectedToken && selectedToken.isNativeCurrency === false
+                  ? selectedToken.symbol
+                  : nativeSymbol,
+              );
         Alert.alert(copy.title, copy.message);
+        // The chain moved under us: re-price and re-read the balance now,
+        // not at the next tick, so the row matches what the user sees next.
+        void fee.refetch();
+        void fetchBalance({ silent: true });
       }
     } finally {
       setIsLoading(false);
@@ -965,7 +1216,9 @@ export default function SendScreen() {
                   <TextInput
                     className="bg-light-main-container p-4 rounded-xl text-light-matte-black flex-1 mr-2"
                     value={recipient}
-                    onChangeText={setRecipient}
+                    onChangeText={(t) => setRecipient(stripWhitespace(t))}
+                    autoCapitalize="none"
+                    autoCorrect={false}
                     placeholder="Enter wallet address"
                     placeholderTextColor="#20222c80"
                   />
@@ -988,6 +1241,11 @@ export default function SendScreen() {
                     Choose recipient
                   </Text>
                 </TouchableOpacity>
+                {recipientProblem && (
+                  <Text className="text-light-primary-red text-xs mt-2">
+                    {recipientProblem}
+                  </Text>
+                )}
               </View>
 
               <View className="mb-6">
@@ -1047,6 +1305,95 @@ export default function SendScreen() {
                 )}
               </View>
 
+              {fee.isSupported && (
+                <View className="bg-light-main-container p-4 rounded-xl mb-4">
+                  <View className="flex-row items-center justify-between">
+                    <Text className="text-light-matte-black/70">
+                      Network fee
+                    </Text>
+                    {fee.isLoading ? (
+                      <SingleLoadingSekeleton
+                        width={96}
+                        height={18}
+                        borderRadius={6}
+                      />
+                    ) : fee.isUnavailable ? (
+                      <TouchableOpacity
+                        activeOpacity={0.7}
+                        onPress={() => void fee.refetch()}
+                      >
+                        <Text className="text-light-primary-red text-xs font-medium">
+                          Couldn't estimate. Tap to retry
+                        </Text>
+                      </TouchableOpacity>
+                    ) : (
+                      <Text className="text-light-matte-black font-medium">
+                        {feeDisplay}
+                      </Text>
+                    )}
+                  </View>
+                  <View className="flex-row items-center justify-between mt-2">
+                    <Text className="text-light-matte-black/60 text-xs">
+                      Fee paid in
+                    </Text>
+                    <View className="flex-row items-center">
+                      <View
+                        className={`px-2 py-0.5 rounded-full ${
+                          prefersStablecoin && !feeFallbackNote
+                            ? "bg-light-primary-red/10"
+                            : "bg-light-matte-black/5"
+                        }`}
+                      >
+                        <Text
+                          className={`text-xs font-semibold ${
+                            prefersStablecoin && !feeFallbackNote
+                              ? "text-light-primary-red"
+                              : "text-light-matte-black/70"
+                          }`}
+                        >
+                          {feePayToken}
+                        </Text>
+                      </View>
+                      <TouchableOpacity
+                        activeOpacity={0.7}
+                        className="ml-2"
+                        onPress={() => router.push("/gas-settings")}
+                      >
+                        <Text className="text-light-primary-red text-xs font-medium">
+                          Change
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                  {feeFallbackNote && (
+                    <Text className="text-light-matte-black/50 text-xs mt-1">
+                      {feeFallbackNote}
+                    </Text>
+                  )}
+                  {feeQuote && !feeFallbackNote && (
+                    <Text className="text-light-matte-black/50 text-xs mt-1">
+                      {validRecipient
+                        ? "Updates automatically. The final fee can differ slightly."
+                        : recipient
+                          ? "Estimate only. Fix the recipient above for the exact fee."
+                          : "Estimate only. Add a recipient for the exact fee."}
+                    </Text>
+                  )}
+                  {feeShortfall && (
+                    <View className="flex-row items-start mt-3">
+                      <AlertTriangle
+                        size={16}
+                        color="#c71c4b"
+                        className="mr-2 mt-0.5"
+                      />
+                      <Text className="text-light-primary-red text-sm flex-1">
+                        {feeShortfall.message}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              )}
+
               {assetReceivableWarning && (
                 <View className="bg-light-primary-red/10 p-4 rounded-xl mb-4">
                   <View className="flex-row items-start">
@@ -1075,9 +1422,9 @@ export default function SendScreen() {
 
             <TouchableOpacity
               activeOpacity={0.7}
-              className={`bg-light-primary-red py-4 rounded-full items-center ${isLoading ? "opacity-70" : ""}`}
+              className={`bg-light-primary-red py-4 rounded-full items-center ${isLoading || feeShortfall ? "opacity-70" : ""}`}
               onPress={handleSend}
-              disabled={isLoading}
+              disabled={isLoading || !!feeShortfall}
             >
               {isLoading ? (
                 <View className="flex-row items-center">

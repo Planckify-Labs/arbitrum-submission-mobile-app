@@ -15,6 +15,7 @@
 
 import { getSmartAccountsEnvironment } from "@metamask/smart-accounts-kit";
 import {
+  encodeFunctionData,
   erc20Abi,
   formatUnits,
   getAddress,
@@ -52,6 +53,7 @@ import type {
   Estimate7710TransactionResult,
   EstimateContractCallFeeArgs,
   EstimateMaxTransferableArgs,
+  EstimateTransferFeeArgs,
   GetRelayerFeeDataArgs,
   GetRelayerStatusArgs,
   GetTokenAllowanceArgs,
@@ -71,6 +73,7 @@ import type {
   SignEip7702AuthorizationArgs,
   SignTransferWithAuthorizationArgs,
   TokenTransferArgs,
+  TransferFeeEstimate,
   TruncateAddressOptions,
   UpgradeToSmartAccountArgs,
   UpgradeToSmartAccountResult,
@@ -111,6 +114,14 @@ import {
 import { settleX402PaymentEvm } from "./x402Settle.ts";
 
 const EVM_NAMESPACE = "eip155" as const;
+
+/**
+ * Gas to assume for a transfer when the node refuses to estimate it. An
+ * ERC-20 `transfer` reverts in simulation when the sender is short of the
+ * token, but the fee shown on the send screen must not vanish then.
+ */
+const NATIVE_TRANSFER_GAS_FALLBACK = 21_000n;
+const ERC20_TRANSFER_GAS_FALLBACK = 65_000n;
 
 /** Canonical MetaMask stateless-7702 delegator (fallback if env lookup fails). */
 const FALLBACK_STATELESS_DELEGATOR =
@@ -412,6 +423,56 @@ export function createEvmWalletKit(): WalletKitAdapter {
       ]);
       const maxFeePerGas = fees.maxFeePerGas ?? (await pc.getGasPrice());
       return { gas, maxFeePerGas, feeWei: gas * maxFeePerGas };
+    },
+
+    async estimateTransferFee({
+      from,
+      to,
+      amount,
+      chain,
+      token,
+    }: EstimateTransferFeeArgs): Promise<TransferFeeEstimate> {
+      assertEvm(chain);
+      const pc = getPublicClient(chain.chain);
+      const pinnedGas = token
+        ? fixedErc20TransferGasLimit({
+            chainId: chain.chain.id,
+            contractAddress: token.contractAddress,
+          })
+        : undefined;
+      // Gas WITHOUT fee fields, same reason as `estimateContractCallFee`.
+      const call = token
+        ? {
+            to: token.contractAddress as `0x${string}`,
+            data: encodeFunctionData({
+              abi: erc20Abi,
+              functionName: "transfer",
+              args: [to as `0x${string}`, amount],
+            }),
+          }
+        : { to: to as `0x${string}`, value: amount };
+      const [gas, fees, gasPrice] = await Promise.all([
+        pinnedGas !== undefined
+          ? Promise.resolve(pinnedGas)
+          : pc
+              .estimateGas({ account: from as `0x${string}`, ...call })
+              .catch(() =>
+                token
+                  ? ERC20_TRANSFER_GAS_FALLBACK
+                  : NATIVE_TRANSFER_GAS_FALLBACK,
+              ),
+        pc.estimateFeesPerGas(),
+        pc.getGasPrice(),
+      ]);
+      // The send itself lets viem pick `maxFeePerGas` (2x base + tip); the
+      // node requires the sender to hold gas * that, but only bills the
+      // actual price. Monad bills the limit either way, which `gasPrice`
+      // times the pinned limit reflects.
+      const maxFeePerGas = fees.maxFeePerGas ?? gasPrice;
+      return {
+        feeNative: gas * gasPrice,
+        maxFeeNative: gas * (maxFeePerGas > gasPrice ? maxFeePerGas : gasPrice),
+      };
     },
 
     async getTokenAllowance({

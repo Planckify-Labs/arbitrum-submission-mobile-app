@@ -369,3 +369,19 @@ describe("SolanaWalletKit — chain-agnostic capabilities", () => {
     );
   });
 });
+
+describe("SolanaWalletKit.estimateTransferFee", () => {
+  const kit = createSolanaWalletKit();
+
+  it("prices a native transfer at the single-signature base fee, no RPC needed", async () => {
+    assert.deepEqual(
+      await kit.estimateTransferFee?.({
+        chain: solanaDevnetChain,
+        from: "11111111111111111111111111111111",
+        to: "11111111111111111111111111111111",
+        amount: 1n,
+      }),
+      { feeNative: 5_000n, maxFeeNative: 5_000n },
+    );
+  });
+});

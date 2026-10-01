@@ -21,7 +21,7 @@
 import { validateMnemonic } from "@scure/bip39";
 import { wordlist as englishWordlist } from "@scure/bip39/wordlists/english";
 import type { Keypair } from "@stellar/stellar-base";
-import { Networks } from "@stellar/stellar-base";
+import { BASE_FEE, Networks } from "@stellar/stellar-base";
 
 import type { ChainConfig } from "@/constants/configs/chainConfig";
 import { assertStellarChain } from "@/constants/configs/chainConfig";
@@ -72,9 +72,11 @@ import type {
   EstablishTrustlineArgs,
   EstablishTrustlineResult,
   EstimateMaxTransferableArgs,
+  EstimateTransferFeeArgs,
   NativeTransferArgs,
   SendSorobanTransactionArgs,
   TokenTransferArgs,
+  TransferFeeEstimate,
   TruncateAddressOptions,
   WalletKitAdapter,
 } from "../types";
@@ -561,6 +563,18 @@ export function createStellarWalletKit(): WalletKitAdapter {
         }
       }
       return balance > reserve ? balance - reserve : 0n;
+    },
+
+    // Every first-party send bids the flat `BASE_FEE` for its single
+    // operation (see `transferService.ts` / `assetTransferService.ts`),
+    // so the bid IS the fee. A surge above it surfaces as
+    // `tx_insufficient_fee` at submit time, which the send screen maps.
+    async estimateTransferFee({
+      chain,
+    }: EstimateTransferFeeArgs): Promise<TransferFeeEstimate> {
+      assertStellar(chain);
+      const stroops = BigInt(BASE_FEE);
+      return { feeNative: stroops, maxFeeNative: stroops };
     },
 
     // ── Display ─────────────────────────────────────────────────────

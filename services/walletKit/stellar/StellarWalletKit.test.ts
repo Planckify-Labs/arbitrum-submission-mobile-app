@@ -507,3 +507,26 @@ describe("StellarWalletKit.estimateMaxTransferable — reserve floor constants",
     assert.equal(STELLAR_FEE_RESERVE_STROOPS, 10_000n);
   });
 });
+
+describe("StellarWalletKit.estimateTransferFee", () => {
+  const kit = createStellarWalletKit();
+  const args = {
+    chain: stellarMainnetChain,
+    from: "GA",
+    to: "GB",
+    amount: 1n,
+  };
+
+  it("prices the flat 100-stroop bid the send path submits", async () => {
+    assert.deepEqual(await kit.estimateTransferFee?.(args), {
+      feeNative: 100n,
+      maxFeeNative: 100n,
+    });
+  });
+
+  it("rejects a chain from another namespace", async () => {
+    await assert.rejects(async () =>
+      kit.estimateTransferFee?.({ ...args, chain: ethereumChain }),
+    );
+  });
+});

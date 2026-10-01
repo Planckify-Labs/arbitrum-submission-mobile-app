@@ -86,6 +86,45 @@ async function detectTokenProgram(
   return TOKEN_PROGRAM_ADDRESS;
 }
 
+/** Per-signature base fee. One signature on a first-party transfer. */
+export const SOLANA_BASE_FEE_LAMPORTS = 5_000n;
+
+/** Account sizes whose rent the sender prepays when the recipient has no ATA. */
+const TOKEN_ACCOUNT_SIZE = 165n;
+const TOKEN_2022_ACCOUNT_SIZE = 170n;
+
+/**
+ * What the sender will be charged for an SPL transfer: the base fee plus,
+ * when the recipient has no associated token account yet, the rent to
+ * create one (the send path prepends an idempotent create, payer = sender).
+ * The rent is the part that surprises people, so it is priced in.
+ */
+export async function estimateSplTransferFeeLamports(args: {
+  rpc: SolanaRpc;
+  to: string;
+  mint: string;
+}): Promise<bigint> {
+  const mintAddr = address(args.mint);
+  const tokenProgram = await detectTokenProgram(args.rpc, mintAddr);
+  const [recipientAta] = await findAssociatedTokenPda({
+    owner: address(args.to),
+    mint: mintAddr,
+    tokenProgram,
+  });
+  const { value } = await args.rpc
+    .getAccountInfo(recipientAta, { encoding: "base64" })
+    .send();
+  if (value) return SOLANA_BASE_FEE_LAMPORTS;
+  const rent = await args.rpc
+    .getMinimumBalanceForRentExemption(
+      tokenProgram === TOKEN_PROGRAM_ADDRESS
+        ? TOKEN_ACCOUNT_SIZE
+        : TOKEN_2022_ACCOUNT_SIZE,
+    )
+    .send();
+  return SOLANA_BASE_FEE_LAMPORTS + BigInt(rent);
+}
+
 export type BuildAndSendSplTransferArgs = {
   rpc: SolanaRpc;
   rpcSubs?: SolanaRpcSubs | undefined;

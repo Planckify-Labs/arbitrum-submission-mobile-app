@@ -337,6 +337,32 @@ export interface ContractCallFeeEstimate {
   feeWei: bigint;
 }
 
+/** Arguments for `WalletKitAdapter.estimateTransferFee`. */
+export interface EstimateTransferFeeArgs {
+  chain: ChainConfig;
+  from: string;
+  to: string;
+  /**
+   * Amount in the sent asset's smallest unit. Estimators may clamp it to
+   * what `from` actually holds, because nodes refuse to price a transfer
+   * the sender can't fund and the fee barely depends on the amount.
+   */
+  amount: bigint;
+  /** The non-native asset being sent. Omitted for the chain's native coin. */
+  token?: { contractAddress: string; decimals: number };
+}
+
+/**
+ * What a plain transfer costs in the chain's native coin, smallest unit.
+ * `feeNative` is the expected charge (what to show); `maxFeeNative` is the
+ * ceiling the node requires the sender to hold (what to gate on). They are
+ * equal on chains with a flat fee.
+ */
+export interface TransferFeeEstimate {
+  feeNative: bigint;
+  maxFeeNative: bigint;
+}
+
 /**
  * Arguments for `WalletKitAdapter.getTokenAllowance` — reads how much of
  * `tokenAddress` the `owner` has approved `spender` to pull.
@@ -1284,6 +1310,17 @@ export interface WalletKitAdapter {
   estimateContractCallFee?(
     args: EstimateContractCallFeeArgs,
   ): Promise<ContractCallFeeEstimate>;
+
+  /**
+   * Prices a plain native or token transfer in the chain's native coin
+   * BEFORE it is signed, so the send screen can show the fee live and
+   * tell the sender up front that they can't cover it. Optional: a kit
+   * that omits it just gets no fee row. Throws when the network can't be
+   * asked; callers treat that as "estimate unavailable", never as zero.
+   */
+  estimateTransferFee?(
+    args: EstimateTransferFeeArgs,
+  ): Promise<TransferFeeEstimate>;
 
   /**
    * Reads an ERC-20 allowance. EVM-only; chains whose token transfers are
