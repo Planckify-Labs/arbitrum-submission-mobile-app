@@ -4,18 +4,17 @@
  * unconditionally — that invariant is untouched), and the api still
  * serves every chain; this layer decides what a user can see and pick.
  *
- * Monad Metropolis build (`FEATURE_PASSKEY_ONLY_ONBOARDING`, the same
- * switch as the passkey-only login and the AUSD agent rail): only Monad
- * mainnet (143) and Monad Testnet (10143) are surfaced — chain pickers,
- * the pay/deposit/send screens, the agent's chain context, wallet lists
- * and wallet derivation all read through here. Everything else is
- * HIDDEN, not deleted: rows on other namespaces stay in SecureStore and
- * come back the moment the flag is off.
+ * Arbitrum Open House 2026 build (`FEATURE_CHAIN_LOCKDOWN`): only Arbitrum
+ * One (42161), Arbitrum Sepolia (421614), Robinhood Chain (4663) and
+ * Robinhood Chain testnet (46630) are surfaced: chain pickers (including
+ * the agent's), the pay/deposit/send screens, the agent's chain context,
+ * wallet lists and wallet derivation all read through here. Everything
+ * else is HIDDEN, not deleted: rows on other namespaces stay in
+ * SecureStore and come back the moment the flag is off.
  *
  * App-side only, deliberately. Deactivating chains on the shared api
- * would hide them from real Play Store users to make a demo look focused;
- * the judges never see the api. (Same call the Stellar-only build made —
- * `services/walletKit/chainSupport.ts` on `stellar-hackathon`.)
+ * would hide them from real Play Store users to make a demo look focused.
+ * (Same call the Stellar-only and Monad-only builds made.)
  *
  * With the flag off every function here is the identity: nothing is
  * filtered, so `main` behaves exactly as before.
@@ -23,28 +22,32 @@
 
 import type { TBlockchain } from "@/api/types/blockchain";
 import type { ChainConfig } from "@/constants/configs/chainConfig";
-import { FEATURE_PASSKEY_ONLY_ONBOARDING } from "@/constants/configs/featureFlags";
+import { FEATURE_CHAIN_LOCKDOWN } from "@/constants/configs/featureFlags";
 import type { TWallet } from "@/constants/types/walletTypes";
 import { resolveNamespace } from "@/hooks/useWallet.helpers";
 import {
-  MONAD_MAINNET_CHAIN_ID,
-  MONAD_TESTNET_CHAIN_ID,
-} from "@/services/chains/evm/monad";
+  ARBITRUM_ONE_CHAIN_ID,
+  ARBITRUM_SEPOLIA_CHAIN_ID,
+  ROBINHOOD_MAINNET_CHAIN_ID,
+  ROBINHOOD_TESTNET_CHAIN_ID,
+} from "@/services/chains/evm/arbitrumStack";
 import type { Namespace } from "@/services/chains/types";
 import { walletKitRegistry } from "./registry";
 import type { WalletKitAdapter } from "./types";
 
-/** True when the app is restricted to the Monad chains. */
-export const CHAIN_LOCKDOWN_ACTIVE = FEATURE_PASSKEY_ONLY_ONBOARDING;
+/** True when the app is restricted to the Arbitrum + Robinhood chains. */
+export const CHAIN_LOCKDOWN_ACTIVE = FEATURE_CHAIN_LOCKDOWN;
 
 /** EVM chain ids the locked-down app surfaces. Order = preference. */
 export const LOCKDOWN_CHAIN_IDS: readonly number[] = [
-  MONAD_MAINNET_CHAIN_ID,
-  MONAD_TESTNET_CHAIN_ID,
+  ARBITRUM_ONE_CHAIN_ID,
+  ARBITRUM_SEPOLIA_CHAIN_ID,
+  ROBINHOOD_MAINNET_CHAIN_ID,
+  ROBINHOOD_TESTNET_CHAIN_ID,
 ];
 
 /** The chain a locked-down app lands on when the active one is hidden. */
-export const LOCKDOWN_DEFAULT_CHAIN_ID = MONAD_MAINNET_CHAIN_ID;
+export const LOCKDOWN_DEFAULT_CHAIN_ID = ARBITRUM_ONE_CHAIN_ID;
 
 const LOCKDOWN_NAMESPACES: readonly Namespace[] = ["eip155"];
 

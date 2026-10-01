@@ -148,14 +148,13 @@ export const FEATURE_EVM_ONCHAIN_SETTLEMENT_MAINNET = flag(
  *   - `FEATURE_PASSKEY_ONLY_ONBOARDING` additionally HIDES the
  *     Google / seed-phrase / private-key paths so the passkey is the
  *     entire account layer for the judged build (Mera bounty framing,
- *     strategy doc "What NOT to do"). Implies the first flag. This also
- *     drives the Monad-only chain lockdown (`services/walletKit/chainSupport.ts`)
- *     for the hackathon build.
+ *     strategy doc "What NOT to do"). Implies the first flag. (The chain
+ *     lockdown has its own flag, `FEATURE_CHAIN_LOCKDOWN`.)
  *
- * Passkey login is ON by default; passkey-only and the Monad lockdown
- * stay OFF on `main`. Kill switch: build with
- * `EXPO_PUBLIC_FF_PASSKEY_ONBOARDING=false` (inlined at bundle time, so
- * it needs a new build or OTA update, not a restart).
+ * Passkey login is ON by default; passkey-only stays OFF on `main`.
+ * Kill switch: build with `EXPO_PUBLIC_FF_PASSKEY_ONBOARDING=false`
+ * (inlined at bundle time, so it needs a new build or OTA update, not a
+ * restart).
  */
 export const FEATURE_PASSKEY_ONLY_ONBOARDING = flag(
   "EXPO_PUBLIC_FF_PASSKEY_ONLY_ONBOARDING",
@@ -164,3 +163,18 @@ export const FEATURE_PASSKEY_ONLY_ONBOARDING = flag(
 export const FEATURE_PASSKEY_ONBOARDING =
   FEATURE_PASSKEY_ONLY_ONBOARDING ||
   flag("EXPO_PUBLIC_FF_PASSKEY_ONBOARDING", true);
+
+/**
+ * Arbitrum Open House 2026 chain lockdown (`services/walletKit/chainSupport.ts`):
+ * the app surfaces only Arbitrum One + Arbitrum Sepolia and Robinhood Chain
+ * mainnet + testnet. Every other chain is HIDDEN, not deleted.
+ *
+ * Independent of the passkey-only login flag. Defaults ON because this lives
+ * on the `arbitrum-hackathon` branch; build with
+ * `EXPO_PUBLIC_FF_CHAIN_LOCKDOWN=false` for the full multi-chain app
+ * (inlined at bundle time, so it needs a new build, not a restart).
+ */
+export const FEATURE_CHAIN_LOCKDOWN = flag(
+  "EXPO_PUBLIC_FF_CHAIN_LOCKDOWN",
+  true,
+);

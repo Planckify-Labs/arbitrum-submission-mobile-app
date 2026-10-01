@@ -887,12 +887,12 @@ export function useWallet() {
   //   - `InteractionManager.runAfterInteractions` pushes the derive
   //     + save off the first-paint critical path so touch handlers on
   //     home don't starve while WebCrypto spins up the polyfill.
-  // Chain lockdown (Monad Metropolis build): a user whose last active
+  // Chain lockdown (Arbitrum Open House build): a user whose last active
   // chain or wallet is one the build hides would otherwise keep seeing it
   // on home — most screens read `activeChain` / `activeWallet` directly,
   // not the (filtered) pickers. Pin both to what the build surfaces, once
   // the chain feed is in. Also covers a fresh passkey wallet: the build's
-  // default chain is Monad, so no onboarding-time switch is needed.
+  // default chain is Arbitrum One, so no onboarding-time switch is needed.
   // Identity when the flag is off.
   // Module-level, not per-instance: `useWallet` is mounted by many
   // components at once and the pin must run exactly once per app session.

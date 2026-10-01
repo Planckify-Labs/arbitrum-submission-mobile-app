@@ -40,6 +40,7 @@ import { HalftoneVoiceWave } from "@/components/common/HalftoneVoiceWave";
 import { FEATURE_PASSKEY_ONLY_ONBOARDING } from "@/constants/configs/featureFlags";
 import { useAgentPrefill } from "@/hooks/useAgentPrefill";
 import { useVoiceTranscription } from "@/hooks/useVoiceTranscription";
+import { CHAIN_LOCKDOWN_ACTIVE } from "@/services/walletKit/chainSupport";
 import ActivitySection, { type ActivitySectionRef } from "./ActivitySection";
 
 export interface TakumiAgentSectionRef {
@@ -167,8 +168,10 @@ const DEFAULT_CAPABILITIES: Capability[] = [
   {
     id: "swap",
     label: "Swap",
-    sample: "SUI → USDC",
-    prompt: "Swap 4 SUI for USDC",
+    sample: CHAIN_LOCKDOWN_ACTIVE ? "ETH → USDC" : "SUI → USDC",
+    prompt: CHAIN_LOCKDOWN_ACTIVE
+      ? "Swap 0.01 ETH for USDC"
+      : "Swap 4 SUI for USDC",
     icon: Repeat,
     variant: "dark",
   },
