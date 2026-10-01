@@ -3,10 +3,22 @@ import type {
   AgentMessagePart,
 } from "@/services/agent-messages/types";
 
-export const BRIDGE_PROGRESS_TOOLS: ReadonlySet<string> = new Set([
+/** Tools whose result is the canonical progress card for a transfer. */
+const EXECUTE_TOOLS: ReadonlySet<string> = new Set([
   "bridge_execute",
-  "bridge_status",
+  "swap_execute",
   "defi_cross_chain_deposit",
+]);
+
+/** Status polls that share that card and must never duplicate it. */
+const STATUS_TOOLS: ReadonlySet<string> = new Set([
+  "bridge_status",
+  "swap_status",
+]);
+
+export const BRIDGE_PROGRESS_TOOLS: ReadonlySet<string> = new Set([
+  ...EXECUTE_TOOLS,
+  ...STATUS_TOOLS,
 ]);
 
 /**
@@ -66,10 +78,7 @@ export function computeSuppressedBridgeToolCallIds(
       if (part.type !== "tool") continue;
       if (!BRIDGE_PROGRESS_TOOLS.has(part.toolName)) continue;
 
-      if (
-        part.toolName === "bridge_execute" ||
-        part.toolName === "defi_cross_chain_deposit"
-      ) {
+      if (EXECUTE_TOOLS.has(part.toolName)) {
         const hash = extractBridgeSourceTxHash(part);
         if (hash) {
           if (!canonicalByHash.has(hash)) {
@@ -90,7 +99,7 @@ export function computeSuppressedBridgeToolCallIds(
       if (part.type !== "tool") continue;
       if (!BRIDGE_PROGRESS_TOOLS.has(part.toolName)) continue;
 
-      if (part.toolName === "bridge_status") {
+      if (STATUS_TOOLS.has(part.toolName)) {
         const hash = extractBridgeSourceTxHash(part);
         if (hash) {
           if (canonicalByHash.has(hash)) {
@@ -135,25 +144,18 @@ export function computeSuppressedBridgePartsInMessage(
 
   if (bridgeParts.length <= 1) return suppressed;
 
-  const hasExecute = bridgeParts.some(
-    (p) =>
-      p.toolName === "bridge_execute" ||
-      p.toolName === "defi_cross_chain_deposit",
-  );
+  const hasExecute = bridgeParts.some((p) => EXECUTE_TOOLS.has(p.toolName));
 
   const seenHashes = new Set<string>();
   let hasRenderedStatusWithoutHash = false;
 
   for (const p of bridgeParts) {
-    if (
-      p.toolName === "bridge_execute" ||
-      p.toolName === "defi_cross_chain_deposit"
-    ) {
+    if (EXECUTE_TOOLS.has(p.toolName)) {
       if (p.hash) seenHashes.add(p.hash);
       continue;
     }
 
-    if (p.toolName === "bridge_status") {
+    if (STATUS_TOOLS.has(p.toolName)) {
       // If message already has an execute card, suppress all sibling status cards
       if (hasExecute) {
         suppressed.add(p.toolCallId);

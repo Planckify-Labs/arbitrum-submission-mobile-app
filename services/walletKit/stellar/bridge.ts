@@ -293,6 +293,16 @@ const SUGGESTED_TOP_UP_USD = 2;
  *
  * Copy is hand-written and carries no em-dashes (`feedback_no_emdash_in_ui_copy`).
  */
+function stellarReadinessUnknown(): BridgeReadinessBlocker {
+  return {
+    code: "readiness_unknown",
+    message:
+      "We could not check that this Stellar account is ready to receive this token. If it has not set up the token yet, add it before the funds arrive.",
+    severity: "warning",
+    remedy: { kind: "none" },
+  };
+}
+
 export async function stellarCheckBridgeDestinationReadiness({
   chain,
   address,
@@ -307,9 +317,11 @@ export async function stellarCheckBridgeDestinationReadiness({
   try {
     funded = await detectAccountFunded(horizon, address);
   } catch {
-    // A check that cannot run must not invent a blocker: warning on
-    // incomplete information trains users to dismiss the real warning.
-    return [];
+    // A check that cannot run must not invent a BLOCKER, but it must not
+    // read as "ready" either: on Stellar a missing trustline is the one
+    // precondition sender-side signing cannot fix, so say we could not
+    // check, as a warning.
+    return [stellarReadinessUnknown()];
   }
 
   if (!funded) {
@@ -338,7 +350,7 @@ export async function stellarCheckBridgeDestinationReadiness({
       try {
         trusts = await hasTrustline(horizon, address, code, issuer);
       } catch {
-        return [];
+        return [stellarReadinessUnknown()];
       }
 
       if (!trusts) {

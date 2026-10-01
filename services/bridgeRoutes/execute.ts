@@ -162,7 +162,17 @@ export async function checkBridgeDestinationReadiness(
     if (typeof __DEV__ !== "undefined" && __DEV__) {
       console.warn("[bridgeRoutes/readiness] check failed", err);
     }
-    return [];
+    // Unknown is not "ready": a warning the user can read, never a
+    // blocker the check has no evidence for.
+    return [
+      {
+        code: "readiness_unknown",
+        message:
+          "We could not check that the receiving wallet is ready for this transfer. Please make sure it can receive this token.",
+        severity: "warning",
+        remedy: { kind: "none" },
+      },
+    ];
   }
 }
 

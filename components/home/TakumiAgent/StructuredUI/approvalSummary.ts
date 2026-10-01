@@ -71,16 +71,6 @@ export const CHAIN_NAMES: Record<string, string> = {
   "stellar:testnet": "Stellar Testnet",
 };
 
-/**
- * EVM chains whose native coin is not ETH but still wears `slip44:60`.
- * Arc's gas token is USDC: calling it "ETH" on an approval would name
- * the wrong asset.
- */
-const NATIVE_SYMBOL_BY_CHAIN: Record<string, string> = {
-  "eip155:5042": "USDC",
-  "eip155:5042002": "USDC",
-};
-
 function chainName(caip2: string): string {
   if (CHAIN_NAMES[caip2]) return CHAIN_NAMES[caip2];
   if (caip2.startsWith("eip155:")) {
@@ -97,9 +87,10 @@ function chainName(caip2: string): string {
  */
 function assetSymbolFromCaip19(asset: string | undefined): string | undefined {
   if (!asset) return undefined;
-  const nativeOverride = NATIVE_SYMBOL_BY_CHAIN[asset.split("/")[0]];
-  if (nativeOverride && asset.includes("/slip44:")) return nativeOverride;
-  if (asset.includes("/slip44:60")) return "ETH";
+  // No guess for `slip44:60`: every EVM chain's native coin wears it
+  // (BNB, POL, AVAX, MON, Arc's USDC), so "ETH" would name the wrong asset
+  // on an approval. The chain's own catalogue row (`assetMeta`) names it;
+  // without one, saying nothing is honest.
   if (asset.includes("/slip44:501")) return "SOL";
   if (asset.endsWith("::sui::SUI")) return "SUI";
   if (asset.includes("/native")) return "XLM";
@@ -242,8 +233,8 @@ export function approvalSummaryFromToolInput(
   // load-bearing and must appear: it is what the known-destination
   // envelope asks the user to confirm, and an approval that hides the
   // address would record a confirmation for something never seen.
-  const fromChain = str("from_chain");
-  const toChain = str("to_chain");
+  const fromChain = str("from_chain") ?? str("chain");
+  const toChain = str("to_chain") ?? str("chain");
   // `bridge_claim`: completes a transfer that was ALREADY sent (bridge
   // spec §5.4.1). It moves nothing the burn did not commit, and carries
   // no amount, so the facts are where it lands and which transfer it

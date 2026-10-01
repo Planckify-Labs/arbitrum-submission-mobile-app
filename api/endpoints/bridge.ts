@@ -7,6 +7,7 @@ import type {
   TBridgeStatus,
   TBridgeStatusRequest,
   TBridgeSupport,
+  TBridgeToken,
 } from "../types/bridge";
 
 /**
@@ -57,6 +58,16 @@ export const bridgeApi = {
    * token (§7.5). This is a SECOND transaction and appears as its own line
    * in the fee breakdown. It is never silent.
    */
+  /**
+   * Tokens on a chain by symbol, name or address, from the route
+   * providers' own token lists (swap spec §4.6: a token pair needs no row
+   * of ours). `verification` is our verdict, not the provider's.
+   */
+  searchTokens: async (chain: string, query: string) => {
+    const search = new URLSearchParams({ chain, query }).toString();
+    return api.get(`bridge/tokens/search?${search}`).json<TBridgeToken[]>();
+  },
+
   getGasTopUpQuote: async (payload: TBridgeGasTopUpRequest) => {
     return api
       .post("bridge/gas-top-up", { json: payload })

@@ -4,6 +4,7 @@ import {
   createPublicClient,
   createWalletClient,
   http,
+  type Transport,
 } from "viem";
 import { chainRpcUrl, rpcFetchOptions } from "@/services/rpc/proxyAuth";
 
@@ -21,12 +22,16 @@ export const getPublicClient = (chain: TChainConfig) => {
   return publicClient;
 };
 
-export const getWalletClient = (account: Account, chain: TChainConfig) => {
+export const getWalletClient = (
+  account: Account,
+  chain: TChainConfig,
+  customTransport?: Transport,
+) => {
   const url = chainRpcUrl(chain);
   const walletClient = createWalletClient({
     account,
     chain: chain,
-    transport: http(url, rpcFetchOptions(url)),
+    transport: customTransport ?? http(url, rpcFetchOptions(url)),
   });
   return walletClient;
 };

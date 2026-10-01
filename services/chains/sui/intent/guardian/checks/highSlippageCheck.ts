@@ -12,7 +12,7 @@
  * borderline-unsafe swap is never rounded into looking safe.
  */
 
-import { getPriceImpactSeverity } from "@/services/swap/aggregator";
+import { getPriceImpactSeverity } from "@/services/swap/slippage";
 import { formatRiskCopy } from "../copy";
 import type { RiskCheck, RiskFlag, Severity } from "../riskCheck";
 

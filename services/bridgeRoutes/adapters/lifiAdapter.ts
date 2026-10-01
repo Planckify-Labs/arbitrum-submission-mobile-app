@@ -45,12 +45,15 @@ const ROUTABLE_NAMESPACES = new Set(["eip155", "solana", "sui"]);
 
 export const lifiBridgeAdapter: BridgeRouteAdapter = {
   key: "lifi",
+  kinds: ["swap", "bridge"] as const,
 
   supports(from: TCaip2, to: TCaip2): boolean {
-    if (from === to) return false;
     const fromNs = parseCaip2(from)?.namespace;
     const toNs = parseCaip2(to)?.namespace;
     if (!fromNs || !toNs) return false;
+    // Same-chain is a legal question (a swap). Which adapter answers it
+    // first is registration order, never a chain list here (swap spec
+    // §4.3, §4.8).
     return ROUTABLE_NAMESPACES.has(fromNs) && ROUTABLE_NAMESPACES.has(toNs);
   },
 

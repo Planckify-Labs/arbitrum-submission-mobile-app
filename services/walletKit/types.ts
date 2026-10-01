@@ -443,6 +443,44 @@ export class BridgePayloadUnsupportedError extends Error {
   }
 }
 
+/**
+ * A pre-sign dry run of a route payload (swap spec §8.4 L4
+ * `simulate-before-sign`).
+ *
+ * `watch` names the assets whose balance change the caller will assert:
+ * a token contract / mint / coin type, or `null` for the chain's native
+ * asset. The kit reports the signer's change in each one it could read.
+ */
+export interface SimulateBridgeExecutionArgs extends SubmitBridgeExecutionArgs {
+  watch: readonly (string | null)[];
+}
+
+export type BridgeSimulation =
+  /** The chain or its RPC cannot dry-run this payload. Not a verdict. */
+  | { status: "unsupported" }
+  /** The dry run failed: sending it would revert, or do nothing useful. */
+  | { status: "reverted" }
+  /**
+   * The dry run succeeded. `deltas` are the signer's balance changes in the
+   * watched assets the kit could read (an asset it could not read is simply
+   * absent, never reported as zero).
+   */
+  | {
+      status: "ok";
+      /**
+       * Always includes every watched asset the kit could read. A kit whose
+       * dry run reports ALL balance changes (Sui) includes unwatched ones
+       * too, so an unrelated coin leaving the wallet is visible.
+       */
+      deltas: readonly { asset: string | null; delta: bigint }[];
+      /**
+       * Native units the dry run may legitimately spend beyond the route's
+       * own value: gas, and account rent where the chain charges it. Set by
+       * the kit, which is the only layer that knows its native decimals.
+       */
+      nativeFeeAllowance: bigint;
+    };
+
 export interface SubmitBridgeExecutionArgs {
   /**
    * The wallet bound to this bridge intent.
@@ -480,7 +518,9 @@ export interface BridgeReadinessBlocker {
     | "no_destination_gas"
     | "missing_trustline"
     | "account_not_funded"
-    | "missing_token_account";
+    | "missing_token_account"
+    /** The check could not run. A WARNING, never blocking: unknown is not "no". */
+    | "readiness_unknown";
   /** Hand-written, ready to render. Never raw error text. */
   message: string;
   severity: "warning" | "blocking";
@@ -1343,6 +1383,21 @@ export interface WalletKitAdapter {
    * that has the concept.
    */
   submitBridgeExecution?(args: SubmitBridgeExecutionArgs): Promise<string>;
+
+  /**
+   * Dry-run a provider-built route payload before anything is signed, and
+   * report the signer's balance changes in the watched assets (swap spec
+   * §8.4 L4). This is what catches calldata we cannot decode: a router that
+   * takes more than the approved amount, or pays out less than the floor,
+   * shows up in the balances even when its calldata is opaque.
+   *
+   * Optional and presence-checked: a kit without it, or a chain whose RPC
+   * cannot simulate (`unsupported`), falls back to the other layers. The
+   * `toAmountMin` floor stays the real protection either way (§8.6).
+   */
+  simulateBridgeExecution?(
+    args: SimulateBridgeExecutionArgs,
+  ): Promise<BridgeSimulation>;
 
   /**
    * Can `address` actually RECEIVE, and then MOVE, `asset` on this chain?

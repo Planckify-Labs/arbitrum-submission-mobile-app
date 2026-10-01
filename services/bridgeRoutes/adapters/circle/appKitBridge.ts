@@ -31,12 +31,14 @@
  */
 
 import {
+  Blockchain,
   resolveChainIdentifier,
   ViemAdapter,
 } from "@circle-fin/adapter-viem-v2";
 import { bridge } from "@circle-fin/app-kit/bridge";
 import { createContext } from "@circle-fin/app-kit/context";
 import type { Account, Chain, PublicClient, WalletClient } from "viem";
+import type { EvmCctpFacts } from "../stellarCctpVerify";
 import type { CircleChainFacts, TCircleBridgePayload } from "./verifyPayload";
 
 /** What App Kit's Viem adapter needs from the device's EVM wallet. */
@@ -81,6 +83,43 @@ export function resolveCircleChain(
   } catch {
     return null;
   }
+}
+
+const evmCctpCache = new Map<number, EvmCctpFacts | null>();
+
+/**
+ * Circle's CCTP V2 `TokenMessenger` and USDC contract for an EVM chain id,
+ * read from App Kit's shipped chain definitions, or `null` when Circle does
+ * not define one. These are the device-side pins for the raw CCTP calls
+ * (EVM → Stellar) that App Kit itself does not build.
+ */
+export function circleEvmCctpFacts(chainId: number): EvmCctpFacts | null {
+  const cached = evmCctpCache.get(chainId);
+  if (cached !== undefined) return cached;
+  let found: EvmCctpFacts | null = null;
+  for (const identifier of Object.values(Blockchain)) {
+    let def: {
+      type?: string;
+      chainId?: number;
+      usdcAddress?: string | null;
+      cctp?: { contracts?: { v2?: { tokenMessenger?: string } } } | null;
+    };
+    try {
+      def = resolveChainIdentifier(
+        identifier as never,
+      ) as unknown as typeof def;
+    } catch {
+      continue;
+    }
+    if (def.type !== "evm" || def.chainId !== chainId) continue;
+    const tokenMessenger = def.cctp?.contracts?.v2?.tokenMessenger;
+    if (tokenMessenger && def.usdcAddress) {
+      found = { tokenMessenger, usdc: def.usdcAddress };
+    }
+    break;
+  }
+  evmCctpCache.set(chainId, found);
+  return found;
 }
 
 type StepEvent = { values?: { state?: string; txHash?: string } };
@@ -238,6 +277,31 @@ export function runAppKitBridge(args: {
               step: handoffStep,
               txHash: hash,
             });
+          }
+          settle(() => resolve(hash));
+          return;
+        }
+        // The hand-off step was BROADCAST (it has a hash) but App Kit could
+        // not confirm it: the receipt wait timed out or the RPC blipped. The
+        // burn may well have landed, and reporting "failed" here invites a
+        // retry, which would be a SECOND irreversible burn. Hand the hash to
+        // the status poll instead; it reads the truth from Circle. Only an
+        // on-chain revert is a definite "nothing moved".
+        const broadcast = result.steps?.find(
+          (s) =>
+            s.name === handoffStep &&
+            s.state === "error" &&
+            typeof s.txHash === "string" &&
+            s.txHash.length > 0 &&
+            s.errorCategory !== "chain_revert",
+        );
+        if (broadcast?.txHash) {
+          const hash = broadcast.txHash;
+          if (typeof __DEV__ !== "undefined" && __DEV__) {
+            console.warn(
+              "[appKitBridge] hand-off broadcast but unconfirmed; handing to status:",
+              { step: handoffStep, txHash: hash },
+            );
           }
           settle(() => resolve(hash));
           return;

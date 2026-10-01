@@ -327,12 +327,12 @@ const SOURCE_REWRITES = {
 
     // Inject override checks at the start of getPublicClient and getWalletClient
     rewritten = rewritten.replace(
-      /export const getPublicClient = \(chain: TChainConfig\) => \{/,
+      /export const getPublicClient = \([\s\S]*?\) => \{/,
       "export const getPublicClient = (chain: TChainConfig) => { if (globalMockPublicClient) return globalMockPublicClient;",
     );
     rewritten = rewritten.replace(
-      /export const getWalletClient = \(account: Account, chain: TChainConfig\) => \{/,
-      "export const getWalletClient = (account: Account, chain: TChainConfig) => { if (globalMockWalletClient) return globalMockWalletClient;",
+      /export const getWalletClient = \([\s\S]*?\) => \{/,
+      "export const getWalletClient = (account: Account, chain: TChainConfig, customTransport?: any) => { if (globalMockWalletClient) return globalMockWalletClient;",
     );
 
     return rewritten;

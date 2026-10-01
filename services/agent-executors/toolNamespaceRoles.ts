@@ -148,6 +148,13 @@ export const TOOL_NAMESPACE_ROLES: Readonly<Record<string, ToolNamespaceSpec>> =
     // which need not be the active one.
     bridge_claim: { role: "counterparty", chainArg: "to_chain" },
 
+    // ── Swap ───────────────────────────────────────────────────────────
+    // A catalogue lookup: names a chain but touches no wallet.
+    swap_find_token: DISCOVERY,
+    swap_quote: { role: "counterparty", chainArg: "chain" },
+    swap_execute: { role: "counterparty", chainArg: "chain" },
+    swap_status: AGNOSTIC,
+
     // ── x402 ───────────────────────────────────────────────────────────
     // Settles from the active wallet within a pre-signed allowance.
     x402_fetch: ACTIVE,

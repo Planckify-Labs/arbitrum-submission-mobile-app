@@ -41,6 +41,16 @@ export function buildBridgeQuotePayload(
     blockers,
     issued_at: quote.issuedAt,
     expires_at: quote.expiresAt,
+    // Swap facts (swap spec §5, §6.1-6.3). `price_impact` absent means
+    // UNKNOWN and must render as absent, never as 0.
+    kind: quote.kind,
+    ...(typeof quote.priceImpact === "number"
+      ? { price_impact: quote.priceImpact }
+      : {}),
+    ...(quote.venue ? { venue: quote.venue } : {}),
+    ...(quote.routeOptions?.length
+      ? { route_options: quote.routeOptions }
+      : {}),
   };
 }
 

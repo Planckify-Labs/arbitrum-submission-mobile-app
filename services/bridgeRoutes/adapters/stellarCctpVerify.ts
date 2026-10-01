@@ -111,14 +111,41 @@ function recipientFromForwarderHook(hookHex: string): string {
 }
 
 /**
+ * Circle's own pins for an EVM chain: the CCTP V2 `TokenMessenger` and the
+ * USDC contract. Resolved on the device from App Kit's shipped chain
+ * definitions (`circleEvmCctpFacts`), never from the backend's payload.
+ */
+export interface EvmCctpFacts {
+  tokenMessenger: string;
+  usdc: string;
+}
+
+export type EvmCctpFactsResolver = (chainId: number) => EvmCctpFacts | null;
+
+/**
  * EVM → Stellar: `depositForBurnWithHook` must burn the quoted USDC
  * amount, with BOTH `mintRecipient` and `destinationCaller` equal to the
  * pinned `CctpForwarder`, and a hook that names the quote's recipient.
+ *
+ * The call target and the burn token are pinned too. Checking the
+ * calldata alone would let a backend point `to` (and the approval) at any
+ * contract that happens to accept the same arguments.
  */
-function verifyInbound(quote: TBridgeQuote, network: StellarCctpNetwork): void {
+function verifyInbound(
+  quote: TBridgeQuote,
+  network: StellarCctpNetwork,
+  evmCctp: EvmCctpFactsResolver,
+): void {
   const ex = quote.execution;
   if (ex.kind !== "evm_transaction" || !ex.approval) {
     throw new StellarCctpMismatchError("inbound_kind");
+  }
+  const source = parseCaip2(quote.from.chain);
+  const chainId = Number(source?.reference);
+  const pins = Number.isInteger(chainId) ? evmCctp(chainId) : null;
+  if (!pins) throw new StellarCctpMismatchError("evm_chain_unknown");
+  if (ex.to.toLowerCase() !== pins.tokenMessenger.toLowerCase()) {
+    throw new StellarCctpMismatchError("token_messenger");
   }
   let decoded: ReturnType<
     typeof decodeFunctionData<typeof DEPOSIT_FOR_BURN_WITH_HOOK_ABI>
@@ -156,7 +183,10 @@ function verifyInbound(quote: TBridgeQuote, network: StellarCctpNetwork): void {
   if (amount !== BigInt(quote.from.amountRaw)) {
     throw new StellarCctpMismatchError("amount");
   }
-  if (burnToken.toLowerCase() !== quote.from.token.address.toLowerCase()) {
+  if (
+    burnToken.toLowerCase() !== quote.from.token.address.toLowerCase() ||
+    burnToken.toLowerCase() !== pins.usdc.toLowerCase()
+  ) {
     throw new StellarCctpMismatchError("burn_token");
   }
   if (
@@ -221,11 +251,20 @@ function verifyOutbound(
   }
 }
 
-/** Throws `StellarCctpMismatchError` unless the payload matches the quote. */
-export function verifyStellarCctpPayload(quote: TBridgeQuote): void {
+/**
+ * Throws `StellarCctpMismatchError` unless the payload matches the quote.
+ * `evmCctp` supplies Circle's pinned EVM contracts (App Kit's registry on
+ * the device); an EVM chain it does not know fails closed.
+ */
+export function verifyStellarCctpPayload(
+  quote: TBridgeQuote,
+  evmCctp: EvmCctpFactsResolver,
+): void {
   const toStellar = networkOf(quote.to.chain);
   const fromStellar = networkOf(quote.from.chain);
-  if (toStellar && !fromStellar) return verifyInbound(quote, toStellar);
+  if (toStellar && !fromStellar) {
+    return verifyInbound(quote, toStellar, evmCctp);
+  }
   if (fromStellar && !toStellar) return verifyOutbound(quote, fromStellar);
   throw new StellarCctpMismatchError("route");
 }

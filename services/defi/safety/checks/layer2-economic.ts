@@ -257,6 +257,80 @@ export const SufficientBalanceCheck: SafetyCheck = {
   },
 };
 
+/**
+ * Price-impact gate (swap spec §6.1, §7.2). Same-chain swaps only: a
+ * bridge's reported "impact" is dominated by its fees, which the bridge card
+ * already itemises, so gating on it would block small transfers on a number
+ * that is not pool impact at all. Bridges show it as information instead.
+ */
+export const PriceImpactGateCheck: SafetyCheck = {
+  id: "price-impact-gate",
+  layer: 2,
+  appliesTo: { actions: ["swap"], stages: ["presign", "submit"] },
+  run: async (ctx) => {
+    const bps =
+      ctx.priceImpactBps ??
+      (typeof ctx.routeQuote?.priceImpact === "number"
+        ? Math.round(ctx.routeQuote.priceImpact * 100)
+        : undefined);
+    if (typeof bps !== "number") return { ok: true };
+
+    // Severity safe (< 2% / 200 bps): pass silently.
+    if (bps < 200) return { ok: true };
+
+    // Severity warn (2% to < 10% / 200 to < 1000 bps): pass with user warning rendered on card.
+    if (bps < 1000) return { ok: true };
+
+    // Severity danger (>= 10% / >= 1000 bps): block execution unless acknowledged.
+    const ack = ctx.priceImpactAckBps;
+    if (ack !== undefined && ack >= bps) {
+      return { ok: true };
+    }
+
+    return {
+      ok: false,
+      fail: "price_impact_too_high",
+      detail: `price impact is ${bps / 100}% and was not acknowledged`,
+    };
+  },
+};
+
+export const RouteSlippageFloorCheck: SafetyCheck = {
+  id: "route-slippage-floor",
+  layer: 2,
+  appliesTo: { actions: ["swap", "bridge"], stages: ["presign", "submit"] },
+  run: async (ctx) => {
+    if (!ctx.routeQuote) return { ok: true };
+    const toAmountRaw = BigInt(ctx.routeQuote.to.amountRaw || "0");
+    const toAmountMinRaw = BigInt(ctx.routeQuote.toAmountMinRaw || "0");
+    const declaredSlippage = ctx.routeQuote.slippageBps;
+
+    if (toAmountMinRaw <= 0n && toAmountRaw > 0n) {
+      return {
+        ok: false,
+        fail: "slippage_too_high",
+        detail: "no minimum output is set on quote",
+      };
+    }
+
+    // The floor must not be looser than the slippage the quote declares.
+    // With no declared slippage there is nothing to compare against, and
+    // guessing a default falsely blocks providers that quote wider (Tower).
+    if (typeof declaredSlippage !== "number") return { ok: true };
+    const slippageBps = BigInt(Math.max(0, Math.round(declaredSlippage)));
+    const expectedMin = (toAmountRaw * (10_000n - slippageBps)) / 10_000n;
+    if (toAmountMinRaw + 1n < expectedMin) {
+      return {
+        ok: false,
+        fail: "slippage_too_high",
+        detail: "the minimum output is below the slippage floor",
+      };
+    }
+
+    return { ok: true };
+  },
+};
+
 export const LAYER2_CHECKS: readonly SafetyCheck[] = [
   SufficientBalanceCheck,
   DecimalsMatchCheck,
@@ -264,4 +338,6 @@ export const LAYER2_CHECKS: readonly SafetyCheck[] = [
   ExpectedOutputBandCheck,
   ApyDriftCheck,
   SlippageFloorCheck,
+  PriceImpactGateCheck,
+  RouteSlippageFloorCheck,
 ];

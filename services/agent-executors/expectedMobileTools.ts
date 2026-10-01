@@ -102,6 +102,11 @@ export const EXPECTED_MOBILE_TOOLS: ReadonlyArray<string> = [
   "bridge_execute",
   "bridge_status",
   "bridge_claim",
+  // standalone same-chain swap (swap-capability-spec §7)
+  "swap_find_token",
+  "swap_quote",
+  "swap_execute",
+  "swap_status",
   // agent-initiated x402 micropayments (spec Phase 5 §5.5)
   "x402_fetch",
 ];
@@ -178,6 +183,8 @@ export const MOBILE_WRITE_TOOLS: ReadonlySet<string> = new Set<string>([
   // `mint_and_forward` that completes a CCTP transfer into Stellar
   // (no Circle Forwarding Service there). Spends destination gas.
   "bridge_claim",
+  // standalone same-chain swap write (swap-capability-spec §7)
+  "swap_execute",
   // agent-initiated x402 micropayment (spends within a pre-signed allowance)
   "x402_fetch",
 ]);

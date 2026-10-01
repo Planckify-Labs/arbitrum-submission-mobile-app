@@ -14,6 +14,7 @@
  */
 
 import { getChainSafetyProvider } from "../registry";
+import { pinnedRouterFor } from "../routeTargets";
 import { NO_TARGET_TO_VERIFY, type SafetyCheck } from "../types";
 
 /**
@@ -156,9 +157,90 @@ export const PoolAnomalyCheck: SafetyCheck = {
   },
 };
 
+/**
+ * Route router allowlist check (§8.4 Layer 1).
+ * Verifies that the router destination and approval spender match the pinned
+ * router allowlist or adapter-declared allowlist.
+ */
+export const RouteRouterAllowlistedCheck: SafetyCheck = {
+  id: "route-router-allowlisted",
+  layer: 1,
+  appliesTo: { actions: ["swap", "bridge"], stages: ["submit"] },
+  run: async (ctx) => {
+    if (!ctx.routeDestination) return { ok: true };
+
+    const destLower = ctx.routeDestination.toLowerCase();
+    // Provider- and chain-scoped: one provider's router is not another's.
+    const pinned = pinnedRouterFor(ctx.routeQuote?.provider, ctx.chainId);
+    const allowedTargets = new Set([
+      ...(pinned ? [pinned] : []),
+      ...(ctx.routeAllowedTargets?.map((t) => t.toLowerCase()) ?? []),
+    ]);
+
+    if (!allowedTargets.has(destLower)) {
+      return {
+        ok: false,
+        fail: "target_not_allowlisted",
+        detail: "route destination is not an allowlisted router",
+      };
+    }
+
+    if (ctx.routeSpender) {
+      const spenderLower = ctx.routeSpender.toLowerCase();
+      const allowedSpenders = new Set([
+        ...(pinned ? [pinned] : []),
+        destLower,
+        ...(ctx.routeAllowedSpenders?.map((s) => s.toLowerCase()) ?? []),
+      ]);
+
+      if (!allowedSpenders.has(spenderLower)) {
+        return {
+          ok: false,
+          fail: "target_not_allowlisted",
+          detail:
+            "route approval spender is not an allowlisted router or spender",
+        };
+      }
+    }
+
+    return { ok: true };
+  },
+};
+
+/**
+ * Route destination bytecode check (§8.4 Layer 1).
+ * Verifies that the destination address is deployed contract code, not an EOA.
+ */
+export const RouteDestinationHasCodeCheck: SafetyCheck = {
+  id: "route-destination-has-code",
+  layer: 1,
+  appliesTo: { actions: ["swap", "bridge"], stages: ["submit"] },
+  run: async (ctx) => {
+    if (!ctx.routeDestination) return { ok: true };
+
+    const provider = getChainSafetyProvider(ctx.namespace);
+    if (!provider) return { ok: true };
+
+    if (provider.hasCode) {
+      const hasCode = await provider.hasCode(ctx.routeDestination, ctx.chainId);
+      if (!hasCode) {
+        return {
+          ok: false,
+          fail: "target_not_a_contract",
+          detail: "destination router is not deployed code",
+        };
+      }
+    }
+
+    return { ok: true };
+  },
+};
+
 export const LAYER1_CHECKS: readonly SafetyCheck[] = [
   TargetHasCodeCheck,
   UnderlyingMatchesCheck,
   TargetAllowlistedCheck,
   PoolAnomalyCheck,
+  RouteRouterAllowlistedCheck,
+  RouteDestinationHasCodeCheck,
 ];

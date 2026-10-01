@@ -111,6 +111,15 @@ export default defineConfig({
       // parsing + the adapter-registry seam, and the card formatters
       // whose per-token decimals handling §6 depends on.
       "services/bridgeRoutes/caip.test.ts",
+      "services/bridgeRoutes/routeAdapter.conformance.test.ts",
+      "services/swap/slippage.test.ts",
+      "services/swap/routeAck.test.ts",
+      // Re-quote bound to the approval, and pre-sign dry-run verdicts
+      // (swap spec §8.4 L2, L4).
+      "services/bridgeRoutes/quoteBinding.test.ts",
+      "services/bridgeRoutes/simulationCheck.test.ts",
+      "services/agent-executors/defi/bridgeExecute.test.ts",
+      "services/agent-executors/defi/swapFindToken.test.ts",
       // The destination-wallet interlock: what stops a `bridge_execute`
       // signing an address the user has already replaced (§7.4).
       "services/bridgeRoutes/destinationChoice.test.ts",
@@ -164,6 +173,8 @@ export default defineConfig({
       // the client-side split behind the redesigned opportunity card.
       "services/defi/quickInvest.test.ts",
       "services/defi/safety/safetyPipeline.test.ts",
+      "services/defi/safety/routeSafety.test.ts",
+      "services/defi/safety/routePipeline.integration.test.ts",
       "services/defi/safety/postexec.test.ts",
       "services/defi/safety/providers/solanaProvider.test.ts",
       "services/defi/safety/providers/suiProvider.test.ts",

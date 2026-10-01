@@ -118,6 +118,8 @@ export const TOOLS_WITHOUT_COUNTERPARTY: ReadonlySet<string> = new Set([
   "defi_cross_chain_deposit",
   "defi_compound",
   "defi_intent_execute",
+  // Standalone same-chain swap pays out to the user's own wallet on the same chain
+  "swap_execute",
   // Creates a reminder, not a transfer. There is no destination at setup
   // time; the venue is disclosed on the opportunity card each cycle, when
   // the user actually approves a deposit.

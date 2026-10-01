@@ -32,7 +32,7 @@ import type { TBlockchain } from "../../../api/types/blockchain.ts";
 import type { ChainConfig } from "../../../constants/configs/chainConfig.ts";
 import * as clients from "../../../utils/clients.ts";
 import { truncateAddress as truncateAddressUtil } from "../../../utils/walletUtils.ts";
-import { isArcChain } from "./bridge.ts";
+import { deliversGasToken } from "./bridge.ts";
 import { createEvmWalletKit } from "./EvmWalletKit.ts";
 
 const setGlobalMockPublicClient = (clients as any).setGlobalMockPublicClient;
@@ -413,7 +413,7 @@ describe("EvmWalletKit — chain-agnostic capabilities", () => {
   });
 });
 
-describe("EvmWalletKit — checkBridgeDestinationReadiness & isArcChain (§10.1)", () => {
+describe("EvmWalletKit — checkBridgeDestinationReadiness & deliversGasToken (§10.1)", () => {
   const kit = createEvmWalletKit();
 
   const arcTestnetChain: ChainConfig = {
@@ -436,35 +436,41 @@ describe("EvmWalletKit — checkBridgeDestinationReadiness & isArcChain (§10.1)
     }),
   };
 
-  it("isArcChain identifies Arc testnet and mainnet, and rejects non-Arc chains", () => {
-    assert.equal(isArcChain(arcTestnetChain), true);
-    assert.equal(isArcChain(arcMainnetChain), true);
-    assert.equal(isArcChain(ethereumChain), false);
-    assert.equal(isArcChain(solanaChain), false);
+  const ARC_USDC = "0x3600000000000000000000000000000000000000";
+  const ARC_EURC = "0xbEf5f6d51CB62b58e6A8f77868681825C6fe21c1";
+
+  it("deliversGasToken: Arc USDC and native assets deliver gas, other tokens do not", () => {
+    assert.equal(deliversGasToken(arcTestnetChain, ARC_USDC), true);
+    assert.equal(deliversGasToken(arcMainnetChain, ARC_USDC), true);
+    assert.equal(deliversGasToken(arcMainnetChain, ARC_EURC), false);
+    assert.equal(deliversGasToken(ethereumChain, null), true);
+    assert.equal(deliversGasToken(ethereumChain, ARC_USDC), false);
+    assert.equal(deliversGasToken(solanaChain, null), false);
   });
 
-  it("isArcChain returns true for custom chains with USDC nativeCurrency or Arc name", () => {
-    const customArcByName: ChainConfig = {
+  it("a chain merely NAMED like Arc, or with a USDC-named gas token, is not exempt", () => {
+    const lookalike: ChainConfig = {
       namespace: "eip155",
       chain: defineChain({
         id: 99999,
-        name: "Arc Staging",
-        nativeCurrency: { name: "Custom", symbol: "CST", decimals: 18 },
-        rpcUrls: { default: { http: ["https://example.com"] } },
-      }),
-    };
-    assert.equal(isArcChain(customArcByName), true);
-
-    const customArcBySymbol: ChainConfig = {
-      namespace: "eip155",
-      chain: defineChain({
-        id: 88888,
-        name: "Some Chain",
+        name: "Arctic",
         nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 18 },
         rpcUrls: { default: { http: ["https://example.com"] } },
       }),
     };
-    assert.equal(isArcChain(customArcBySymbol), true);
+    assert.equal(deliversGasToken(lookalike, ARC_USDC), false);
+  });
+
+  it("warns when EURC arrives on an Arc wallet holding no USDC for gas", async () => {
+    setGlobalMockPublicClient({ getBalance: async () => 0n });
+    const blockers = await kit.checkBridgeDestinationReadiness!({
+      chain: arcMainnetChain,
+      address: VALID_ADDRESS,
+      contractAddress: ARC_EURC,
+    });
+    setGlobalMockPublicClient(null);
+    assert.equal(blockers.length, 1);
+    assert.equal(blockers[0].code, "no_destination_gas");
   });
 
   it("returns no blockers on Arc testnet even when address has zero gas", async () => {

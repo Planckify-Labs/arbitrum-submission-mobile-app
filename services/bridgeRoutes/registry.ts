@@ -8,27 +8,35 @@
  * called.
  */
 
-import type { TCaip2 } from "@/api/types/bridge";
-import type { BridgeRouteAdapter } from "./types";
+import { routeKindOf, type TCaip2, type TRouteKind } from "@/api/types/bridge";
+import type { BridgeRouteAdapter, RouteAdapter } from "./types";
 
-const adapters = new Map<string, BridgeRouteAdapter>();
+const adapters = new Map<string, RouteAdapter>();
 
-export function registerBridgeAdapter(a: BridgeRouteAdapter): void {
+export function registerBridgeAdapter(a: RouteAdapter): void {
   adapters.set(a.key, a);
 }
 
-export function getBridgeAdapter(key: string): BridgeRouteAdapter | null {
+export const registerRouteAdapter = registerBridgeAdapter;
+
+export function getBridgeAdapter(key: string): RouteAdapter | null {
   return adapters.get(key) ?? null;
 }
 
-export function listBridgeAdapters(): BridgeRouteAdapter[] {
+export const getRouteAdapter = getBridgeAdapter;
+
+export function listBridgeAdapters(): RouteAdapter[] {
   return [...adapters.values()];
 }
+
+export const listRouteAdapters = listBridgeAdapters;
 
 /** Test-only: drop every registration so suites start clean. */
 export function resetBridgeAdapters(): void {
   adapters.clear();
 }
+
+export const resetRouteAdapters = resetBridgeAdapters;
 
 /**
  * Adapters that can serve this route. Empty means a CAPABILITY BOUNDARY
@@ -37,9 +45,16 @@ export function resetBridgeAdapters(): void {
 export function resolveBridgeAdapters(
   from: TCaip2,
   to: TCaip2,
-): BridgeRouteAdapter[] {
-  return listBridgeAdapters().filter((a) => a.supports(from, to));
+  kind?: TRouteKind,
+): RouteAdapter[] {
+  const targetKind = kind ?? routeKindOf(from, to);
+  return listBridgeAdapters().filter((a) => {
+    if (a.kinds && !a.kinds.includes(targetKind)) return false;
+    return a.supports(from, to);
+  });
 }
+
+export const resolveRouteAdapters = resolveBridgeAdapters;
 
 /**
  * Pick the adapter that produced a quote, falling back to route
@@ -50,10 +65,11 @@ export function adapterForQuote(
   provider: string | undefined,
   from: TCaip2,
   to: TCaip2,
-): BridgeRouteAdapter | null {
+  kind?: TRouteKind,
+): RouteAdapter | null {
   if (provider) {
     const direct = getBridgeAdapter(provider);
     if (direct) return direct;
   }
-  return resolveBridgeAdapters(from, to)[0] ?? null;
+  return resolveBridgeAdapters(from, to, kind)[0] ?? null;
 }

@@ -14,12 +14,14 @@ import {
   Link2,
   type LucideIcon,
   Shield,
+  ShieldCheck,
   Sparkles,
 } from "lucide-react-native";
 import React from "react";
 import {
   Pressable,
   ScrollView,
+  Switch,
   Text,
   TouchableOpacity,
   View,
@@ -31,6 +33,7 @@ import {
 } from "react-native-safe-area-context";
 import { useStrategiesPrefetch } from "@/hooks/strategies/useStrategiesPrefetch";
 import { useDappConnections } from "@/hooks/useDappConnections";
+import { useMevProtection } from "@/hooks/useMevProtection";
 import { usePreferredGasToken } from "@/hooks/usePreferredGasToken";
 import { useTransportSessions } from "@/hooks/useTransportSessions";
 import { useWallet } from "@/hooks/useWallet";
@@ -178,6 +181,7 @@ export default function SettingsScreen() {
           {groups.map((group) => (
             <SettingsGroup key={group.title} group={group} />
           ))}
+          <MevProtectionGroup />
         </ScrollView>
       </SafeAreaView>
     </>
@@ -242,5 +246,44 @@ function SettingsRow({ row }: { row: TSettingsRow }) {
       ) : null}
       <ChevronRight size={18} color="#c71c4b" />
     </TouchableOpacity>
+  );
+}
+
+/**
+ * Private-relay submission for swaps on chains with a public mempool
+ * (swap spec §9.2). Inline toggle, unlike the link rows above.
+ */
+function MevProtectionGroup() {
+  const { mevEnabled, setMevEnabled } = useMevProtection();
+  return (
+    <View className="mx-4 mb-5">
+      <Text className="text-light-matte-black/50 text-xs uppercase tracking-wide mb-2 ml-1">
+        Swaps
+      </Text>
+      <View
+        className="bg-light rounded-2xl overflow-hidden"
+        style={CARD_SHADOW}
+      >
+        <View className="px-4 py-3.5 flex-row items-center">
+          <View className="w-9 h-9 rounded-xl bg-light-primary-red/10 items-center justify-center mr-3">
+            <ShieldCheck size={18} color="#c71c4b" />
+          </View>
+          <View className="flex-1 pr-3">
+            <Text className="text-light-matte-black font-semibold">
+              Private transactions
+            </Text>
+            <Text className="text-light-matte-black/50 text-xs mt-0.5">
+              Helps protect swaps from front-running where available
+            </Text>
+          </View>
+          <Switch
+            value={mevEnabled}
+            onValueChange={setMevEnabled}
+            trackColor={{ true: "#c71c4b" }}
+            accessibilityLabel="Private transactions"
+          />
+        </View>
+      </View>
+    </View>
   );
 }

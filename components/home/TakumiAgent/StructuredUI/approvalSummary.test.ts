@@ -129,12 +129,25 @@ describe("approvalSummaryFromToolInput — same-chain swap", () => {
     expect(summary).toBe("Swap 1 USDC on Arc");
   });
 
-  // Arc's gas token is USDC. Naming it "ETH" on an approval would name
-  // the wrong asset.
-  it("names native Arc USDC as USDC without the catalogue", () => {
+  // Every EVM chain's native coin wears `slip44:60` (Arc's is USDC, BNB
+  // Chain's BNB, Polygon's POL). Without the catalogue the summary must not
+  // guess "ETH": that names the wrong asset on an approval.
+  it("never guesses an EVM native coin without the catalogue", () => {
+    for (const chain of [ARC, "eip155:56", "eip155:137"]) {
+      const summary = approvalSummaryFromToolInput(
+        { ...swapInput, chain, from_asset: `${chain}/slip44:60` },
+        undefined,
+      );
+      expect(summary).not.toContain("ETH");
+    }
+  });
+
+  it("names the native coin from the chain's own catalogue row", () => {
     const summary = approvalSummaryFromToolInput(
       { ...swapInput, from_asset: `${ARC}/slip44:60` },
       undefined,
+      undefined,
+      { symbol: "USDC", decimals: 18 },
     );
     expect(summary).toContain("USDC");
     expect(summary).not.toContain("ETH");

@@ -65,6 +65,7 @@ import { SvmWalletNamespaceMismatchError } from "../types.ts";
 import {
   solanaCaip2For,
   solanaCheckBridgeDestinationReadiness,
+  solanaSimulateBridgeExecution,
   solanaSubmitBridgeExecution,
   solanaToAssetCaip19,
 } from "./bridge.ts";
@@ -502,6 +503,7 @@ export function createSolanaWalletKit(): WalletKitAdapter {
     caip2For: solanaCaip2For,
     toAssetCaip19: solanaToAssetCaip19,
     submitBridgeExecution: solanaSubmitBridgeExecution,
+    simulateBridgeExecution: solanaSimulateBridgeExecution,
     checkBridgeDestinationReadiness: solanaCheckBridgeDestinationReadiness,
   };
 }

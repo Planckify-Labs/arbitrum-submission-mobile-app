@@ -214,6 +214,16 @@ export const Eip155SafetyProvider: ChainSafetyProvider = {
     return typeof code === "string" && code.length > 2;
   },
 
+  /** L1: verify whether an arbitrary address has deployed bytecode. */
+  async hasCode(address, chainId) {
+    const ctx = clientFor(chainId);
+    if (!ctx || !isAddress(address)) return false;
+    const code = await ctx.client
+      .getBytecode({ address: address as `0x${string}` })
+      .catch(() => undefined);
+    return typeof code === "string" && code.length > 2;
+  },
+
   /** L1: the identity read appropriate to the kind. */
   async readUnderlying(target, chainId) {
     const ctx = clientFor(chainId);

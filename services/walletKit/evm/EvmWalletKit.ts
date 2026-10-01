@@ -80,6 +80,7 @@ import type {
 import {
   evmCaip2For,
   evmCheckBridgeDestinationReadiness,
+  evmSimulateBridgeExecution,
   evmSubmitBridgeExecution,
   evmToAssetCaip19,
 } from "./bridge.ts";
@@ -759,6 +760,7 @@ export function createEvmWalletKit(): WalletKitAdapter {
     caip2For: evmCaip2For,
     toAssetCaip19: evmToAssetCaip19,
     submitBridgeExecution: evmSubmitBridgeExecution,
+    simulateBridgeExecution: evmSimulateBridgeExecution,
     checkBridgeDestinationReadiness: evmCheckBridgeDestinationReadiness,
   };
 }

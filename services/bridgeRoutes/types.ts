@@ -24,6 +24,8 @@ import type {
   TBridgeStatus,
   TCaip2,
   TCaip19,
+  TRouteKind,
+  TRouteOption,
 } from "@/api/types/bridge";
 import type { ChainConfig } from "@/constants/configs/chainConfig";
 import type { TWallet } from "@/constants/types/walletTypes";
@@ -65,9 +67,12 @@ export interface BridgeReadinessRequest {
   chains: ChainConfig[];
 }
 
-export interface BridgeRouteAdapter {
-  /** Stable registry key, e.g. `"lifi"`, `"cctp"`. */
+export interface RouteAdapter {
+  /** Stable registry key, e.g. `"lifi"`, `"cctp"`, `"tower"`. */
   key: string;
+
+  /** Topologies this adapter serves. */
+  kinds: readonly TRouteKind[];
 
   /** Can this adapter move value from `from` to `to`? */
   supports(from: TCaip2, to: TCaip2): boolean;
@@ -114,4 +119,18 @@ export interface BridgeRouteAdapter {
     fromAddress: string;
     amountUsd: number;
   }): Promise<TBridgeQuote>;
+
+  /** Alternative venues for the same pair, for a venue picker (§6.3). */
+  listRouteOptions?(req: TBridgeQuoteRequest): Promise<TRouteOption[]>;
+
+  /** Contracts this provider may legitimately return. Absent = fail closed. */
+  targetAllowlist?(chain: TCaip2): Promise<readonly string[]>;
+
+  /** Provider-side simulation, when it beats ours. */
+  simulate?(q: TBridgeQuote): Promise<unknown>;
+
+  /** Provider-side calldata decoding, for §8.4 L4. */
+  decodeCall?(q: TBridgeQuote): Promise<unknown>;
 }
+
+export type BridgeRouteAdapter = RouteAdapter;

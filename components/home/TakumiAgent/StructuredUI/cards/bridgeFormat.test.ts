@@ -363,6 +363,9 @@ describe("truncateAddress", () => {
 describe("formatUsd", () => {
   it("formats and rejects non-numbers", () => {
     expect(formatUsd("1234.5")).toBe("$1,234.50");
+    // A sub-cent fee is real: never "$0.00", which reads as free.
+    expect(formatUsd("0.00125")).toBe("< $0.01");
+    expect(formatUsd("0")).toBe("$0.00");
     expect(formatUsd(undefined)).toBeNull();
     expect(formatUsd("nope")).toBeNull();
   });

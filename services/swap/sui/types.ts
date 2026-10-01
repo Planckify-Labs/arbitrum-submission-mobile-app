@@ -1,9 +1,9 @@
 /**
- * Sui swap layer types (spec §4.5). Mirrors `services/swap/aggregator.ts`'s
+ * Sui swap layer types (spec §4.5). Mirrors the removed EVM aggregator's
  * `SwapRoute` shape — a venue returns a finished `sui-ptb` plus the quote
  * numbers the guardian needs (`expectedOut`, `priceImpact`).
  *
- * Swap is NOT a `DefiProtocolAdapter` (the EVM path uses `aggregator.ts`),
+ * Swap is NOT a `DefiProtocolAdapter` (EVM swaps go through `services/bridgeRoutes`),
  * so the Sui swap router lives here and is selected per-network by
  * `venueSelector.ts` — the model never picks a DEX (§3, §4.6).
  */

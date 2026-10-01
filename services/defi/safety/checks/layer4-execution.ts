@@ -108,6 +108,18 @@ export const DecodedIntentMatchCheck: SafetyCheck = {
       };
     }
 
+    if (ctx.routeQuote && intent.minOut !== null) {
+      const minExpected = BigInt(ctx.routeQuote.toAmountMinRaw || "0");
+      if (intent.minOut < minExpected) {
+        return {
+          ok: false,
+          fail: "decoded_intent_mismatch",
+          detail:
+            "the call specifies a minimum output below the approved quote",
+        };
+      }
+    }
+
     return { ok: true };
   },
 };

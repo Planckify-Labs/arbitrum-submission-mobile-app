@@ -68,6 +68,7 @@ import type {
 import {
   suiCaip2For,
   suiCheckBridgeDestinationReadiness,
+  suiSimulateBridgeExecution,
   suiSubmitBridgeExecution,
   suiToAssetCaip19,
 } from "./bridge.ts";
@@ -557,6 +558,7 @@ export function createSuiWalletKit(): WalletKitAdapter {
     caip2For: suiCaip2For,
     toAssetCaip19: suiToAssetCaip19,
     submitBridgeExecution: suiSubmitBridgeExecution,
+    simulateBridgeExecution: suiSimulateBridgeExecution,
     checkBridgeDestinationReadiness: suiCheckBridgeDestinationReadiness,
   };
 }

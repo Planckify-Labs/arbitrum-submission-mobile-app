@@ -30,8 +30,12 @@ let booted = false;
 export function bootstrapBridgeAdapters(): void {
   if (booted && listBridgeAdapters().length > 0) return;
 
-  // `lifi` — any asset, EVM + Solana + Sui. Misses Stellar.
-  registerBridgeAdapter(lifiBridgeAdapter);
+  // Registration order is the tie-break when several adapters answer a
+  // route: specialists first, the generalist (`lifi`) last. Mirrors the
+  // backend, which stamps the chosen provider on every quote anyway.
+
+  // `tower` — same-chain swaps on the chains Tower serves.
+  registerBridgeAdapter(towerBridgeAdapter);
 
   // `circle-cctp` / `circle-cctpx` — USDC and EURC through Circle's Arc
   // App Kit, run on the device with the user's signer (§5.4). The backend
@@ -46,9 +50,8 @@ export function bootstrapBridgeAdapters(): void {
   // calls: App Kit does not reach Stellar (§3.2, §5.4).
   registerBridgeAdapter(cctpStellarBridgeAdapter);
 
-  // `tower` — same-chain swaps on Arc. The two above refuse same-chain
-  // routes, so there is nothing to arbitrate.
-  registerBridgeAdapter(towerBridgeAdapter);
+  // `lifi` — any asset, EVM + Solana + Sui. Misses Stellar. Last.
+  registerBridgeAdapter(lifiBridgeAdapter);
 
   booted = true;
 }

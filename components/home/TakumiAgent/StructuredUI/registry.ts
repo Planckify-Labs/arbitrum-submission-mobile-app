@@ -62,6 +62,8 @@ export const toolComponents: Record<string, ToolComponent<any, any>> = {
   approve_spending: SpendingApprovalCard,
   approveSpending: SpendingApprovalCard,
   swap_quote: SwapQuoteCard,
+  swap_execute: BridgeProgressCard,
+  swap_status: BridgeProgressCard,
   // Single card for every namespace's balance read — list-tokens AND
   // single-native-balance lookups. New per-namespace executors plug in
   // by emitting `WalletBalancesPayload` and being added to this map —

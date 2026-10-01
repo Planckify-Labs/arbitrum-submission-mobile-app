@@ -16,6 +16,7 @@
  * the runner about ERC-20, and adding Stellar trustlines won't either.
  */
 
+import type { TBridgeQuote } from "@/api/types/bridge";
 import type { Namespace } from "@/services/chains/types";
 import type { DefiErrorCode } from "../errors/defiErrors";
 import type {
@@ -43,7 +44,7 @@ export type SafetyLayer = 0 | 1 | 2 | 3 | 4 | 5 | 6;
  * New actions (`claim`, `rebalance`, …) dock the same way: add the union
  * member here, scope any check that shouldn't run for it, done.
  */
-export type SafetyAction = "deposit" | "withdraw";
+export type SafetyAction = "deposit" | "withdraw" | "swap" | "bridge";
 
 /**
  * Which trust anchor is running (§11.1). The backend owns identity, policy and
@@ -121,7 +122,15 @@ export interface SafetyCheck {
 export interface DecodedIntent {
   /** eip155 `to` · solana programId · sui pkg::mod::fn · stellar contract. */
   destination: string;
-  action: "deposit" | "withdraw" | "approve" | "stake" | "claim" | "unknown";
+  action:
+    | "deposit"
+    | "withdraw"
+    | "approve"
+    | "stake"
+    | "claim"
+    | "swap"
+    | "bridge"
+    | "unknown";
   /** Token address / mint / coinType / asset code. */
   assetIn: string | null;
   amountIn: bigint | null;
@@ -329,6 +338,20 @@ export interface SafetyContext {
    * chain's reorg window is), not the counting.
    */
   confirmations?: number;
+
+  // ── Swap / Bridge route safety context ──────────────────────────────
+  routeQuote?: TBridgeQuote;
+  priceImpactBps?: number;
+  priceImpactAckBps?: number;
+  fromAsset?: string;
+  toAsset?: string;
+  fromChain?: string;
+  toChain?: string;
+  slippageBps?: number;
+  routeSpender?: string;
+  routeDestination?: string;
+  routeAllowedTargets?: readonly string[];
+  routeAllowedSpenders?: readonly string[];
 }
 
 /**
@@ -349,6 +372,8 @@ export interface ChainSafetyProvider {
     target: DepositTarget,
     chainId: number | string,
   ): Promise<boolean>;
+  /** L1: raw address exists and is executable code (EVM bytecode > 0). */
+  hasCode?(address: string, chainId: number | string): Promise<boolean>;
   /** L1: identity read — vault.asset() / comet.baseToken() / coinType / mint. */
   readUnderlying(
     target: DepositTarget,

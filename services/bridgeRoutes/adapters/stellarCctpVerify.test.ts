@@ -12,8 +12,9 @@ import { describe, expect, it } from "vitest";
 import type { TBridgeQuote } from "@/api/types/bridge";
 import { STELLAR_CCTP_CONTRACTS } from "@/services/walletKit/stellar/cctpContracts";
 import {
+  type EvmCctpFactsResolver,
   StellarCctpMismatchError,
-  verifyStellarCctpPayload,
+  verifyStellarCctpPayload as verifyWith,
 } from "./stellarCctpVerify";
 
 const GOLDEN_RECIPIENT =
@@ -23,6 +24,12 @@ const GOLDEN_HOOK =
 const BASE_USDC = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
 const TOKEN_MESSENGER = "0x28b5a0e9C621a5BadaA536219b3a228C8168cf5d";
 const EVM_ME = "0x3304E22DDaa22bCdC5fCa2269b418046aE7b566A";
+/** Circle's pins, as App Kit's registry would answer them for Base. */
+const PINS: EvmCctpFactsResolver = (chainId) =>
+  chainId === 8453
+    ? { tokenMessenger: TOKEN_MESSENGER, usdc: BASE_USDC }
+    : null;
+const verifyStellarCctpPayload = (q: TBridgeQuote) => verifyWith(q, PINS);
 const FORWARDER_BYTES =
   `0x${Buffer.from(StrKey.decodeContract(STELLAR_CCTP_CONTRACTS.pubnet.forwarder)).toString("hex")}` as `0x${string}`;
 
@@ -105,6 +112,31 @@ function field(fn: () => void): string {
   }
   return "none";
 }
+
+describe("verifyStellarCctpPayload — EVM → Stellar pins", () => {
+  it("refuses a call to anything but Circle's TokenMessenger", () => {
+    const q = inbound() as any;
+    const evil = "0x000000000000000000000000000000000000bEEF";
+    q.execution.to = evil;
+    q.execution.approval.spender = evil;
+    expect(field(() => verifyStellarCctpPayload(q))).toBe("token_messenger");
+  });
+
+  it("refuses an EVM chain Circle's registry does not know", () => {
+    const q = inbound() as any;
+    q.from.chain = "eip155:999999";
+    expect(field(() => verifyStellarCctpPayload(q))).toBe("evm_chain_unknown");
+  });
+
+  it("refuses a burn token that is not the chain's USDC", () => {
+    const other = "0x1111111111111111111111111111111111111111";
+    const resolver: EvmCctpFactsResolver = () => ({
+      tokenMessenger: TOKEN_MESSENGER,
+      usdc: other,
+    });
+    expect(field(() => verifyWith(inbound(), resolver))).toBe("burn_token");
+  });
+});
 
 describe("verifyStellarCctpPayload — EVM → Stellar", () => {
   it("accepts the golden mainnet layout", () => {

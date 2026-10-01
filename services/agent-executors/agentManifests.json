@@ -36,7 +36,8 @@
       "display_name": "DeFi specialist",
       "tool_prefixes": [
         "defi_",
-        "bridge_"
+        "bridge_",
+        "swap_"
       ],
       "status": "ready"
     }

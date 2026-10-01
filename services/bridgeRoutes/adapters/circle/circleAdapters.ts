@@ -53,6 +53,7 @@ function makeCircleBridgeAdapter(cfg: {
 }): BridgeRouteAdapter {
   return {
     key: cfg.key,
+    kinds: ["bridge"] as const,
 
     /**
      * Route fallback only: the backend decides which adapter serves a

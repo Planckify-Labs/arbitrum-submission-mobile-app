@@ -74,6 +74,8 @@ export function formatUsd(amountUsd: string | undefined): string | null {
   if (!amountUsd) return null;
   const n = Number.parseFloat(amountUsd);
   if (!Number.isFinite(n)) return null;
+  // A real but sub-cent amount must not read as free.
+  if (n > 0 && n < 0.005) return "< $0.01";
   return `$${n.toLocaleString("en-US", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
@@ -445,6 +447,8 @@ export function noRouteCopy(reason: string | undefined): string {
       return "That asset does not belong to the chain it was paired with.";
     case "check_unavailable":
       return "We could not check routes right now. Please try again in a moment.";
+    case "chain_not_enabled":
+      return "We do not support that network yet.";
     default:
       return "We could not find a route for that transfer.";
   }

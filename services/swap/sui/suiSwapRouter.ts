@@ -1,7 +1,7 @@
 /**
  * Sui swap router (spec §4.5) — the `swap` entry point the compiler calls.
  *
- * Mirrors `services/swap/aggregator.ts`'s `getSwapRoute` shape: takes the
+ * Mirrors the removed EVM aggregator's `getSwapRoute` shape: takes the
  * resolved pair + amount, runs the network-gated venue selector, and
  * returns a finished `sui-ptb` route (with `expectedOut` / `priceImpact`
  * for the guardian). Throws a typed `SuiSwapError` — never a raw SDK/RPC

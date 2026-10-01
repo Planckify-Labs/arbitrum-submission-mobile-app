@@ -16,6 +16,7 @@ import { DEFI_INTENT_EXECUTORS } from "./intentExecutors";
 import { getConfig, listOpportunities, listPositions } from "./reads";
 import { listRecurringInvest, setRecurringInvest } from "./recurring";
 import { simulateDeposit } from "./simulate";
+import { SWAP_EXECUTORS } from "./swap";
 import { claim, compound, deposit, rebalance, withdraw } from "./writes";
 
 export const DEFI_EXECUTORS: Record<string, MobileToolExecutor> = {
@@ -39,4 +40,6 @@ export const DEFI_EXECUTORS: Record<string, MobileToolExecutor> = {
   // `bridge_` prefix is declared on the DeFi agent in
   // `agentManifests.json`, so `composeAgentExecutors` accepts it here.
   ...BRIDGE_EXECUTORS,
+  // Standalone same-chain swap (swap-capability-spec §7).
+  ...SWAP_EXECUTORS,
 };

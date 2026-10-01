@@ -9,6 +9,7 @@
  * implementation for every chain, forever.
  */
 
+import { parseCaip2, parseCaip19 } from "@/services/bridgeRoutes/caip";
 import type { SafetyCheck } from "../types";
 
 /**
@@ -43,7 +44,9 @@ const POOL_ID_SHAPE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{7,63}$/;
 export const NoLlmSuppliedAddressCheck: SafetyCheck = {
   id: "no-llm-supplied-address",
   layer: 0,
-  appliesTo: { stages: ["presign"] },
+  // Not swap/bridge: those run at `submit`, and `bridge_execute` carries a
+  // legitimate `to_address` (its own guards live in the executor).
+  appliesTo: { actions: ["deposit", "withdraw"], stages: ["presign"] },
   run: async (ctx) => {
     const input = ctx.toolInput;
     if (!input) return { ok: true };
@@ -201,9 +204,110 @@ export const WithdrawBalanceCheck: SafetyCheck = {
   },
 };
 
+/**
+ * Asset-chain consistency for same-chain swaps (§8.4 Layer 0).
+ * If action is "swap", asserts from_chain === to_chain and that asset CAIP-19
+ * identifiers match the swap chain.
+ */
+export const AssetChainConsistencyCheck: SafetyCheck = {
+  id: "asset-chain-consistency",
+  layer: 0,
+  appliesTo: { actions: ["swap"], stages: ["presign", "submit"] },
+  run: async (ctx) => {
+    if (ctx.fromChain && ctx.toChain && ctx.fromChain !== ctx.toChain) {
+      return {
+        ok: false,
+        fail: "unsupported_chain",
+        detail: "same-chain swap cannot cross chains",
+      };
+    }
+    const input = ctx.toolInput;
+    const fromChain =
+      (typeof input?.from_chain === "string"
+        ? input.from_chain
+        : ctx.fromChain) ?? "";
+    const toChain =
+      (typeof input?.to_chain === "string" ? input.to_chain : ctx.toChain) ??
+      "";
+    if (fromChain && toChain && fromChain !== toChain) {
+      return {
+        ok: false,
+        fail: "unsupported_chain",
+        detail: "same-chain swap cannot cross chains",
+      };
+    }
+    const fromAsset =
+      typeof input?.from_asset === "string" ? input.from_asset : undefined;
+    const toAsset =
+      typeof input?.to_asset === "string" ? input.to_asset : undefined;
+    if (fromAsset && fromChain) {
+      const parsed = parseCaip19(fromAsset);
+      if (parsed && parsed.chain !== fromChain) {
+        return {
+          ok: false,
+          fail: "unsupported_asset",
+          detail: "from_asset chain does not match swap chain",
+        };
+      }
+    }
+    if (toAsset && toChain) {
+      const parsed = parseCaip19(toAsset);
+      if (parsed && parsed.chain !== toChain) {
+        return {
+          ok: false,
+          fail: "unsupported_asset",
+          detail: "to_asset chain does not match swap chain",
+        };
+      }
+    }
+    return { ok: true };
+  },
+};
+
+/**
+ * Route parameter validation (§8.4 Layer 0).
+ * Verifies positive amounts and valid CAIP identifiers for swap and bridge.
+ */
+export const RouteParametersCheck: SafetyCheck = {
+  id: "route-parameters",
+  layer: 0,
+  appliesTo: { actions: ["swap", "bridge"], stages: ["presign", "submit"] },
+  run: async (ctx) => {
+    if (ctx.requestedAmount !== "MAX") {
+      if (
+        typeof ctx.requestedAmount !== "bigint" ||
+        ctx.requestedAmount <= 0n
+      ) {
+        return {
+          ok: false,
+          fail: "below_min_deposit",
+          detail: "route amount must be positive",
+        };
+      }
+    }
+    if (ctx.fromChain && !parseCaip2(ctx.fromChain)) {
+      return {
+        ok: false,
+        fail: "unsupported_chain",
+        detail: "from_chain is not a valid CAIP-2 identifier",
+      };
+    }
+    if (ctx.toChain && !parseCaip2(ctx.toChain)) {
+      return {
+        ok: false,
+        fail: "unsupported_chain",
+        detail: "to_chain is not a valid CAIP-2 identifier",
+      };
+    }
+    return { ok: true };
+  },
+};
+
 export const LAYER0_CHECKS: readonly SafetyCheck[] = [
   NoLlmSuppliedAddressCheck,
   StrictInputSchemaCheck,
   WithdrawHintMatchCheck,
   WithdrawBalanceCheck,
+  AssetChainConsistencyCheck,
+  RouteParametersCheck,
 ];

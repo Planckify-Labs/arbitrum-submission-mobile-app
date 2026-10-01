@@ -558,6 +558,13 @@ is reviewed out of band.
 | B14 | Chain ids and token addresses written into the model's prompt | `agent-api` `systemPrompt.ts:49-52` | §4.9 |
 | B15 | `toBridgeSteps` derives step `kind` from a chain-crossing heuristic instead of LI.FI's own `includedSteps[].type`; a same-chain quote's fee-collection step is mislabeled `"Swap via Integrator Fee"` (live-verified). Currently invisible only because both cards discard step labels and synthesize their own | `api` `lifi.mapping.ts` `toBridgeSteps`; `BridgeProgressCard.tsx` `isSwap()`/`buildSteps` | medium (dead today, real once §6.4 lands) |
 
+> **B12 on hold (live-checked 2026-09-30).** Tower's `GET /chains` reports
+> `supportedFeatures: ["bridge","rpc-proxy","wallet-balance"]` for Arc
+> mainnet (5042), with `swaps` only on Arc Testnet, yet swaps on 5042
+> quote and build. Filtering on the flag as proposed below would disable
+> the working route, so the adapter keeps its table until Tower's flags
+> match reality. The §4.7 chain intersection applies on top either way.
+
 B12 is the instructive one. **Tower publishes `GET /chains` and `GET
 /tokens`**, with a `supportedFeatures` array per chain. The adapter
 hardcodes Arc anyway. Querying those endpoints, filtering to chains whose
@@ -863,7 +870,7 @@ export interface RouteQuote {
   kind: RouteKind;
 
   /**
-   * Price impact as a fraction (0.032 = 3.2%), when the provider reports
+   * Price impact in PERCENT (3.2 = 3.2%; adapters convert. Tower's docs say percentage but it returns basis points, live-verified 2026-09-30), when the provider reports
    * it. Absent means UNKNOWN and must render as absent, never as 0.
    */
   priceImpact?: number;

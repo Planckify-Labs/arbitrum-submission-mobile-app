@@ -61,6 +61,11 @@ import { bridgeDestinationChoice } from "@/services/bridgeRoutes/destinationChoi
 import { checkBridgeDestinationReadiness } from "@/services/bridgeRoutes/execute";
 import { buildBridgeQuotePayload } from "@/services/bridgeRoutes/quotePayload";
 import type { Namespace } from "@/services/chains/types";
+import {
+  routeAck,
+  routeAckKeyOf,
+  type SymbolMismatch,
+} from "@/services/swap/routeAck";
 import { addressesEqual } from "@/services/walletKit/chainInfo";
 import { tapFeedback } from "@/utils/hapticsUtils";
 import { agentErrorCopy } from "../agentErrorCopy";
@@ -80,25 +85,24 @@ import {
   truncateAddress,
 } from "./bridgeFormat";
 import { ChainIcon } from "./ChainIcon";
-
-const BRAND_RED = "#c71c4b";
-const MUTED = "#6b7280";
-const WARN_AMBER = "#b45309";
+import {
+  AssetLine,
+  BRAND_RED,
+  FeeBreakdown,
+  MUTED,
+  type QuoteSide,
+  RouteSteps,
+  Row,
+  SectionLabel,
+  Shell,
+  UnverifiedTokenNotice,
+  WARN_AMBER,
+} from "./routeCardParts";
 
 type BridgeQuoteInput = {
   from_chain?: string;
   to_chain?: string;
   amount_raw?: string;
-};
-
-type QuoteSide = {
-  chain?: string;
-  /** Backend-resolved display name, so the card never derives one. */
-  chainName?: string;
-  token?: TBridgeToken;
-  address?: string;
-  amountRaw?: string;
-  amountUsd?: string;
 };
 
 type BridgeQuoteData =
@@ -121,6 +125,8 @@ type BridgeQuoteData =
       issued_at?: string;
       expires_at?: string;
       source_tx_hash?: string;
+      /** The model's symbol hint disagrees with the quoted token (§7.2). */
+      asset_symbol_mismatch?: SymbolMismatch[];
     };
 
 type BridgeQuoteOutput = {
@@ -130,153 +136,7 @@ type BridgeQuoteOutput = {
   data?: BridgeQuoteData;
 };
 
-// ── shells ────────────────────────────────────────────────────────────
-
-function Shell({ children }: { children: React.ReactNode }) {
-  return (
-    <View className="my-1.5 rounded-2xl border border-light-matte-black/10 bg-white px-4 py-3.5">
-      {children}
-    </View>
-  );
-}
-
-function SectionLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <Text className="text-[10px] font-bold uppercase tracking-wide text-gray-400">
-      {children}
-    </Text>
-  );
-}
-
-function Row({
-  label,
-  value,
-  emphasis,
-}: {
-  label: string;
-  value: string;
-  emphasis?: boolean;
-}) {
-  return (
-    <View className="flex-row items-center justify-between py-1">
-      <Text className="text-xs text-gray-500 flex-1 pr-3">{label}</Text>
-      <Text
-        className={
-          emphasis
-            ? "text-xs font-bold text-light-matte-black"
-            : "text-xs font-semibold text-light-matte-black"
-        }
-      >
-        {value}
-      </Text>
-    </View>
-  );
-}
-
 // ── §7.1 what am I moving ─────────────────────────────────────────────
-
-/**
- * Which of the user's wallets is PAYING.
- *
- * The card named the destination but never the source, so with several
- * wallets on a chain there was no way to tell which one funds were
- * leaving. "Where is it going" and "what is it leaving" are both part of
- * §7.1, and only one of them was answered.
- *
- * Shows the wallet's NAME when the address matches one on the device —
- * "Main Wallet · ETH" is a fact the user can act on, whereas an `0x…`
- * string is one more thing to decode. Falls back to the bare address for
- * anything unrecognised, which is itself the useful signal.
- */
-function SourceWallet({
-  address,
-  chain,
-}: {
-  address: string | undefined;
-  chain: string | undefined;
-}) {
-  const { wallets } = useWallet();
-  const namespace = chain ? parseCaip2(chain)?.namespace : undefined;
-  if (!address) return null;
-
-  const match = namespace
-    ? wallets.find(
-        (w) =>
-          w.namespace === namespace &&
-          addressesEqual(namespace, w.address, address),
-      )
-    : undefined;
-
-  return (
-    <View className="flex-row items-center gap-1 mt-0.5">
-      <Wallet size={11} color={MUTED} />
-      <Text className="text-[11px] text-gray-500">
-        From {match?.name ? `${match.name} ` : ""}
-        <Text className="text-gray-400">{truncateAddress(address)}</Text>
-      </Text>
-    </View>
-  );
-}
-
-function AssetLine({
-  side,
-  caption,
-  showSourceWallet,
-}: {
-  side: QuoteSide | undefined;
-  caption: string;
-  /** Only the paying side — the destination has its own "Arrives at" box. */
-  showSourceWallet?: boolean;
-}) {
-  const token = side?.token;
-  const usd = formatUsd(side?.amountUsd);
-  return (
-    <View>
-      <SectionLabel>{caption}</SectionLabel>
-      <View className="flex-row items-baseline gap-1.5 mt-0.5">
-        <Text className="text-lg font-bold text-light-matte-black">
-          {formatTokenAmount(side?.amountRaw, token?.decimals)}
-        </Text>
-        <Text className="text-sm font-semibold text-light-matte-black">
-          {token?.symbol ?? ""}
-        </Text>
-        {usd ? <Text className="text-[11px] text-gray-400">{usd}</Text> : null}
-      </View>
-      <View className="flex-row items-center gap-1 mt-0.5">
-        <ChainIcon caip2={side?.chain} size={12} />
-        <Text className="text-[11px] text-gray-500">
-          {side?.chainName ?? chainLabel(side?.chain)}
-        </Text>
-        {token && !token.isNative ? (
-          // USDC vs USDC.e on Arbitrum are DIFFERENT assets. Showing the
-          // contract is what stops a silent mispick landing the user in
-          // the wrong one (§7.1).
-          //
-          // The LABEL is not decoration. Unlabelled, a bare `0x…` in a
-          // wallet app reads as an account, and a real user took this for
-          // a stranger's wallet receiving their funds. The failure is
-          // worse in the other direction too: teaching people to skim
-          // past `0x…` strings here is teaching them to skim past the one
-          // in "Arrives at", which IS a destination.
-          <Text className="text-[10px] text-gray-400">
-            Token {truncateAddress(token.address)}
-          </Text>
-        ) : null}
-        {token?.verification === "unverified" ? (
-          <View className="flex-row items-center gap-0.5">
-            <ShieldQuestion size={11} color={WARN_AMBER} />
-            <Text className="text-[10px] font-semibold text-amber-700">
-              Unverified
-            </Text>
-          </View>
-        ) : null}
-      </View>
-      {showSourceWallet ? (
-        <SourceWallet address={side?.address} chain={side?.chain} />
-      ) : null}
-    </View>
-  );
-}
 
 // ── §7.4 where is it landing ──────────────────────────────────────────
 
@@ -497,63 +357,6 @@ function BlockerRow({
 
 // ── §7.2 / §7.3 detail ────────────────────────────────────────────────
 
-function FeeBreakdown({ fees }: { fees: TBridgeFee[] | undefined }) {
-  const { deducted, onTop } = partitionFees(fees);
-  if (deducted.length === 0 && onTop.length === 0) return null;
-
-  return (
-    <View className="mt-2">
-      {deducted.length > 0 ? (
-        <>
-          <SectionLabel>Taken from what you receive</SectionLabel>
-          {deducted.map((fee) => (
-            <Row
-              key={`${fee.key}-${fee.label}-${fee.amountRaw}`}
-              label={fee.label}
-              value={
-                formatUsd(fee.amountUsd) ??
-                formatTokenValue(fee.amountRaw, fee.token)
-              }
-            />
-          ))}
-        </>
-      ) : null}
-      {onTop.length > 0 ? (
-        <View className={deducted.length > 0 ? "mt-1.5" : undefined}>
-          <SectionLabel>Paid on top</SectionLabel>
-          {onTop.map((fee) => (
-            <Row
-              key={`${fee.key}-${fee.label}-${fee.amountRaw}`}
-              label={fee.label}
-              value={
-                formatUsd(fee.amountUsd) ??
-                formatTokenValue(fee.amountRaw, fee.token)
-              }
-            />
-          ))}
-        </View>
-      ) : null}
-    </View>
-  );
-}
-
-function RouteSteps({ steps }: { steps: TBridgeRouteStep[] | undefined }) {
-  const meaningful = (steps ?? []).filter(
-    (s) => s.kind === "swap" || s.kind === "burn",
-  );
-  if (meaningful.length <= 1) return null;
-  return (
-    <View className="mt-2">
-      <SectionLabel>Route</SectionLabel>
-      {meaningful.map((step, index) => (
-        <Text key={step.key} className="text-[11px] text-gray-500 mt-0.5">
-          {index + 1}. {step.label}
-        </Text>
-      ))}
-    </View>
-  );
-}
-
 // ── local re-quote on destination change ──────────────────────────────
 
 type RoutableQuote = Extract<BridgeQuoteData, { routable: true }>;
@@ -718,6 +521,59 @@ function QuoteSkeleton() {
 
 // ── main card ─────────────────────────────────────────────────────────
 
+/**
+ * The route moves a different token than the one the user named (swap spec
+ * §7.2, USDC vs USDC.e). Neither a silent pass nor a hard block: the user
+ * confirms here, and `bridge_execute` refuses until they have.
+ */
+function SymbolMismatchNotice({
+  mismatches,
+  ackKey,
+  live,
+}: {
+  mismatches: SymbolMismatch[];
+  ackKey: string | null;
+  live: boolean;
+}) {
+  const [confirmed, setConfirmed] = useState(
+    () => (ackKey ? routeAck.get(ackKey)?.symbolsConfirmed : false) ?? false,
+  );
+  if (mismatches.length === 0) return null;
+  return (
+    <View className="mt-2.5 rounded-xl border border-amber-200 bg-amber-50/70 p-2.5">
+      {mismatches.map((m) => (
+        <View key={m.side} className="flex-row items-start gap-2">
+          <AlertTriangle size={14} color="#b45309" />
+          <Text className="text-[11px] font-medium text-amber-800 flex-1">
+            You asked for {m.expected}, but this transfer{" "}
+            {m.side === "from" ? "sends" : "delivers"} {m.actual}.
+          </Text>
+        </View>
+      ))}
+      {confirmed ? (
+        <Text className="text-[11px] font-semibold text-emerald-700 mt-1.5">
+          Confirmed. You can approve the transfer.
+        </Text>
+      ) : live && ackKey ? (
+        <Pressable
+          onPress={() => {
+            tapFeedback();
+            routeAck.record(ackKey, { symbolsConfirmed: true });
+            setConfirmed(true);
+          }}
+          accessibilityRole="button"
+          accessibilityLabel="Confirm this token"
+          className="mt-2 self-start rounded-xl border-2 border-light-primary-red bg-light-primary-red/10 px-3 py-1.5 active:opacity-70"
+        >
+          <Text className="text-[11px] font-bold text-light-matte-black">
+            Yes, use {mismatches[mismatches.length - 1].actual}
+          </Text>
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
+
 const BridgeQuoteCard: React.FC<
   ToolComponentProps<BridgeQuoteInput, BridgeQuoteOutput>
 > = ({ state, input, output, mode, onUserPrompt }) => {
@@ -874,6 +730,21 @@ const BridgeQuoteCard: React.FC<
         <ArrowDown size={16} color={MUTED} />
       </View>
       <AssetLine side={quote.to} caption="You receive" />
+
+      <SymbolMismatchNotice
+        key={`symbols|${routeAckKeyOf(quote) ?? "none"}`}
+        mismatches={baseQuote?.asset_symbol_mismatch ?? []}
+        ackKey={routeAckKeyOf(quote)}
+        live={mode === "live"}
+      />
+      <UnverifiedTokenNotice
+        // A re-quote is a different route: its confirmation starts over.
+        key={`unverified|${routeAckKeyOf(quote) ?? "none"}`}
+        side={quote.to}
+        ackKey={routeAckKeyOf(quote)}
+        live={mode === "live"}
+        verb="this transfer delivers"
+      />
 
       {/* §7.1 native asset confirmation — shown only for Arc / native gas tokens */}
       {showsNativeBadge ? (

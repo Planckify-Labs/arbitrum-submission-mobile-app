@@ -15,6 +15,28 @@
 /** CAIP-2 chain id, e.g. `eip155:8453`, `sui:mainnet`, `stellar:pubnet`. */
 export type TCaip2 = string;
 
+export type TRouteKind = "swap" | "bridge";
+
+export function routeKindOf(fromChain: TCaip2, toChain: TCaip2): TRouteKind {
+  return fromChain === toChain ? "swap" : "bridge";
+}
+
+export function routeQuoteKindOf(quote: {
+  from: { chain: TCaip2 };
+  to: { chain: TCaip2 };
+}): TRouteKind {
+  return quote.from.chain === quote.to.chain ? "swap" : "bridge";
+}
+
+export interface TRouteOption {
+  dexId?: string;
+  name: string;
+  /** Absent when the provider does not quote per venue (Tower, live-verified). */
+  outputAmountRaw?: string;
+  minOutRaw?: string;
+  priceImpact?: number;
+}
+
 /** CAIP-19 asset id, e.g. `eip155:8453/erc20:0x8335…`, `eip155:1/slip44:60`. */
 export type TCaip19 = string;
 
@@ -101,7 +123,8 @@ export type TBridgeBlockerCode =
   | "no_destination_gas"
   | "missing_trustline"
   | "account_not_funded"
-  | "missing_token_account";
+  | "missing_token_account"
+  | "readiness_unknown";
 
 export type TBridgeRemedy =
   | { kind: "gas_top_up"; suggestedUsd: number }
@@ -242,6 +265,10 @@ export interface TBridgeQuote {
   };
   /** Worst-case guarantee. The protection number on screen (§7.2). */
   toAmountMinRaw: string;
+  kind: TRouteKind;
+  priceImpact?: number;
+  venue?: { key: string; name: string; logoUri?: string };
+  routeOptions?: TRouteOption[];
   slippageBps: number;
   fees: TBridgeFee[];
   receivesNativeAsset: boolean;
@@ -262,6 +289,7 @@ export interface TBridgeQuote {
 export type TBridgeNoRouteReason =
   | "same_chain"
   | "chain_not_supported"
+  | "chain_not_enabled"
   | "asset_not_supported"
   | "asset_chain_mismatch"
   | "no_route_found"
@@ -299,6 +327,8 @@ export interface TBridgeQuoteRequest {
   amountRaw: string;
   fromAddress: string;
   toAddress: string;
+  transferSpeedHint?: "fast" | "standard";
+  useForwarder?: boolean;
 }
 
 export interface TBridgeStatusRequest {
@@ -316,3 +346,8 @@ export interface TBridgeGasTopUpRequest {
   fromAddress: string;
   amountUsd: number;
 }
+
+export type TRouteQuote = TBridgeQuote;
+export type TRouteQuoteRequest = TBridgeQuoteRequest;
+export type TRouteSupportedChain = TBridgeSupportedChain;
+export type TRouteToken = TBridgeToken;

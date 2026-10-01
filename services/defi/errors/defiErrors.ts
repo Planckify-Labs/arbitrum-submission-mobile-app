@@ -99,9 +99,12 @@ export type DefiErrorCode =
   | "exit_delay_not_acknowledged"
   /** L3/L5: we could not establish how long funds would be locked. Fail closed. */
   | "exit_terms_unknown"
+  /** L2: price impact is too high and was not acknowledged. */
+  | "price_impact_too_high"
   | "unknown";
 
 const PASSTHROUGH_CODES = new Set<DefiErrorCode>([
+  "price_impact_too_high",
   "insufficient_funds",
   "tier_exceeds_user_policy",
   "protocol_not_in_whitelist",
@@ -553,6 +556,11 @@ export const defiErrorCopy: Record<DefiErrorCode, DefiErrorCopy> = {
   exit_terms_unknown: {
     title: "We can't confirm withdrawals",
     body: "We couldn't check how long your money would be locked here, so we won't deposit into it. Please pick another option.",
+    cta: "review",
+  },
+  price_impact_too_high: {
+    title: "High price impact",
+    body: "This swap would significantly move the pool price and cost you more than expected. Confirm the high impact to proceed, or try a smaller amount.",
     cta: "review",
   },
   unknown: {

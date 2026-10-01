@@ -90,6 +90,11 @@ under `components/`, `hooks/`, `app/` must not contain
 `namespace === "eip155" | "solana" | "sui"`. Allowlist + reasons live in
 `scripts/check-chain-agnostic.sh`. If you're tempted to branch on
 namespace in shared code, add the capability to the adapter instead.
+The same command also runs `scripts/check-chain-id-literals.sh`: no
+`"eip155:<n>"` strings or `chainId === <n>` comparisons in shared code or
+the route surface, because chain support is a `Blockchain` row (swap spec
+§4.8). Protocol constants and security allowlists live inside the adapter
+or kit instead.
 
 ### DApp bridge isolation (memory feedback)
 

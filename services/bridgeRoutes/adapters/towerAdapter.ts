@@ -39,6 +39,7 @@ const ARC_CHAINS = new Set<TCaip2>(["eip155:5042", "eip155:5042002"]);
 
 export const towerBridgeAdapter: BridgeRouteAdapter = {
   key: "tower",
+  kinds: ["swap"] as const,
 
   supports(from: TCaip2, to: TCaip2): boolean {
     return from === to && ARC_CHAINS.has(from);

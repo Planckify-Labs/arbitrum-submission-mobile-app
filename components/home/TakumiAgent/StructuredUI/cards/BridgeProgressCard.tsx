@@ -36,23 +36,27 @@
 
 import {
   AlertTriangle,
+  ArrowRight,
   ArrowUpRight,
   Check,
-  CircleDashed,
+  ChevronDown,
+  ChevronUp,
   Clock,
   Info,
+  RefreshCw,
 } from "lucide-react-native";
 import type React from "react";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { Linking, Pressable, Text, View } from "react-native";
 import { bridgeApi } from "@/api/endpoints/bridge";
 import type { TBlockchain } from "@/api/types/blockchain";
-import type {
-  TBridgeOutcome,
-  TBridgePhase,
-  TBridgeRouteStep,
-  TBridgeStatus,
-  TBridgeToken,
+import {
+  routeKindOf,
+  type TBridgeOutcome,
+  type TBridgePhase,
+  type TBridgeRouteStep,
+  type TBridgeStatus,
+  type TBridgeToken,
 } from "@/api/types/bridge";
 import { useBlockchainsWithStorage } from "@/hooks/useBlockchainsWithStorage";
 import { buildChainConfigFromBlockchain } from "@/hooks/useWallet.helpers";
@@ -214,7 +218,18 @@ function isSwap(data: BridgeProgressData): boolean {
   // quote's `from` / `to` sides.
   const from = data.from_chain ?? data.from?.chain;
   const to = data.to_chain ?? data.to?.chain;
-  return !!from && from === to;
+  return !!from && !!to && routeKindOf(from, to) === "swap";
+}
+
+/**
+ * The swap legs the adapter reported, one per real venue (swap spec §6.4:
+ * render what the route did, never a collapsed guess). Fee-collection
+ * (`protocol`) steps are fees, not legs, and are not rendered as rows.
+ */
+function swapLegs(data: BridgeProgressData): { key: string; venue?: string }[] {
+  return (data.steps ?? [])
+    .filter((s) => s.kind === "swap")
+    .map((s) => ({ key: s.key, venue: s.provider?.name }));
 }
 
 function buildSteps(
@@ -237,14 +252,17 @@ function buildSteps(
         active: false,
       });
     }
-    steps.push({
-      key: "swap",
-      label: isComplete
-        ? `Swapped on ${fromChainName}`
-        : `Swapping on ${fromChainName}`,
-      done: isComplete,
-      active: !isComplete,
-    });
+    // One transaction settles every leg at once, so they share a state.
+    const legs = swapLegs(data);
+    for (const leg of legs.length > 0 ? legs : [{ key: "swap" }]) {
+      const where = leg.venue ? `via ${leg.venue}` : `on ${fromChainName}`;
+      steps.push({
+        key: `swap-${leg.key}`,
+        label: isComplete ? `Swapped ${where}` : `Swapping ${where}`,
+        done: isComplete,
+        active: !isComplete,
+      });
+    }
     return steps;
   }
 
@@ -257,18 +275,24 @@ function buildSteps(
     });
   }
 
+  const burnDone = isComplete || current > 0;
   steps.push({
     key: "burn",
-    label: `Sent from ${fromChainName}`,
-    done: isComplete || current > 0,
+    label: burnDone
+      ? `Sent from ${fromChainName}`
+      : `Sending from ${fromChainName}`,
+    done: burnDone,
     active: !isComplete && current === 0,
   });
 
   const range = data.duration_range_seconds;
+  const attestDone = isComplete || current > 1;
   steps.push({
     key: "attestation",
-    label: "Waiting for the transfer to be confirmed",
-    done: isComplete || current > 1,
+    label: attestDone
+      ? "Transfer confirmed"
+      : "Waiting for the transfer to be confirmed",
+    done: attestDone,
     active: !isComplete && current === 1,
     hint: range
       ? `Usually ${Math.round(range[0] / 60)} to ${Math.round(range[1] / 60)} minutes`
@@ -277,7 +301,9 @@ function buildSteps(
 
   steps.push({
     key: "mint",
-    label: `Delivered on ${toChainName}`,
+    label: isComplete
+      ? `Delivered on ${toChainName}`
+      : `Delivering on ${toChainName}`,
     done: isComplete,
     active: !isComplete && current === 2,
   });
@@ -285,23 +311,39 @@ function buildSteps(
   return steps;
 }
 
-function StepRow({ step }: { step: DisplayStep }) {
+/**
+ * One node of the vertical stepper. The connector below each node is
+ * coloured by whether THIS step is done, so the filled part of the rail
+ * always ends at the step currently in flight.
+ */
+function StepRow({ step, isLast }: { step: DisplayStep; isLast: boolean }) {
   return (
-    <View className="flex-row items-start gap-2 py-1">
-      <View className="pt-0.5">
+    <View className="flex-row gap-3">
+      <View className="w-5 items-center">
         {step.done ? (
-          <Check size={14} color={SUCCESS_GREEN} />
+          <View className="h-5 w-5 items-center justify-center rounded-full bg-emerald-500">
+            <Check size={11} color="#ffffff" strokeWidth={3} />
+          </View>
         ) : step.active ? (
-          <Clock size={14} color={BRAND_RED} />
+          <View className="h-5 w-5 items-center justify-center rounded-full border-2 border-light-primary-red bg-light-primary-red/10">
+            <View className="h-2 w-2 rounded-full bg-light-primary-red" />
+          </View>
         ) : (
-          <CircleDashed size={14} color="#d1d5db" />
+          <View className="h-5 w-5 rounded-full border-2 border-gray-200 bg-white" />
+        )}
+        {isLast ? null : (
+          <View
+            className={`my-0.5 w-0.5 flex-1 rounded-full ${
+              step.done ? "bg-emerald-300" : "bg-gray-200"
+            }`}
+          />
         )}
       </View>
-      <View className="flex-1">
+      <View className={`flex-1 pt-px ${isLast ? "" : "pb-3"}`}>
         <Text
-          className={`text-xs ${
+          className={`text-[13px] ${
             step.done
-              ? "text-light-matte-black/60"
+              ? "text-light-matte-black/70"
               : step.active
                 ? "font-semibold text-light-matte-black"
                 : "text-gray-400"
@@ -310,8 +352,51 @@ function StepRow({ step }: { step: DisplayStep }) {
           {step.label}
         </Text>
         {step.active && step.hint ? (
-          <Text className="text-[10px] text-gray-400 mt-0.5">{step.hint}</Text>
+          <View className="flex-row items-center gap-1 mt-0.5">
+            <Clock size={11} color={MUTED} />
+            <Text className="text-[11px] text-gray-500">{step.hint}</Text>
+          </View>
         ) : null}
+      </View>
+    </View>
+  );
+}
+
+/** One end of the route summary: amount (when known) over chain. */
+function RouteEnd({
+  amount,
+  caip2,
+  chainName,
+  align,
+}: {
+  amount?: string;
+  caip2?: string;
+  chainName: string;
+  align: "left" | "right";
+}) {
+  const right = align === "right";
+  return (
+    <View className={`flex-1 ${right ? "items-end" : "items-start"}`}>
+      {amount ? (
+        <Text
+          numberOfLines={1}
+          className="text-sm font-bold text-light-matte-black"
+        >
+          {amount}
+        </Text>
+      ) : null}
+      <View className={`flex-row items-center gap-1 ${amount ? "mt-0.5" : ""}`}>
+        <ChainIcon caip2={caip2} size={14} />
+        <Text
+          numberOfLines={1}
+          className={
+            amount
+              ? "text-[11px] text-gray-500"
+              : "text-xs font-semibold text-light-matte-black"
+          }
+        >
+          {chainName}
+        </Text>
       </View>
     </View>
   );
@@ -340,17 +425,19 @@ function TxLink({
       }}
       accessibilityRole={openable ? "link" : "text"}
       accessibilityLabel={`${label} ${hash}`}
-      className="flex-row items-center justify-between py-1 active:opacity-70"
+      className="flex-row items-center justify-between py-2 active:opacity-70"
     >
-      <View className="flex-row items-center gap-1">
-        <ChainIcon caip2={chain} size={11} />
-        <Text className="text-[11px] text-gray-500">{label}</Text>
+      <View className="flex-1 flex-row items-center gap-1.5 pr-2">
+        <ChainIcon caip2={chain} size={14} />
+        <Text numberOfLines={1} className="text-xs text-gray-500">
+          {label}
+        </Text>
       </View>
       <View className="flex-row items-center gap-1">
-        <Text className="text-[11px] font-semibold text-light-matte-black">
+        <Text className="text-xs font-semibold text-light-matte-black">
           {truncateAddress(hash)}
         </Text>
-        {openable ? <ArrowUpRight size={11} color={MUTED} /> : null}
+        {openable ? <ArrowUpRight size={13} color={BRAND_RED} /> : null}
       </View>
     </Pressable>
   );
@@ -375,6 +462,9 @@ const BridgeProgressCard: React.FC<
     bridgeDestinationChoice.subscribe,
     bridgeDestinationChoice.getVersion,
   );
+  // A settled transfer folds its (all-ticked) steps away by default; the
+  // route and both tx links are the receipt that matters by then.
+  const [stepsOpen, setStepsOpen] = useState(false);
   // Raw tool args carry `amount_raw` in smallest units; without decimals
   // the approval would read "Bridge 5000000".
   const { data: blockchains } = useBlockchainsWithStorage({ isActive: true });
@@ -396,6 +486,7 @@ const BridgeProgressCard: React.FC<
       : undefined) ??
     input?.from_chain ??
     (inputRecord?.fromChain as string | undefined) ??
+    (inputRecord?.chain as string | undefined) ??
     (input?.from_asset
       ? (chainOfAsset(input.from_asset) ?? undefined)
       : undefined) ??
@@ -412,6 +503,7 @@ const BridgeProgressCard: React.FC<
       : undefined) ??
     input?.to_chain ??
     (inputRecord?.toChain as string | undefined) ??
+    (inputRecord?.chain as string | undefined) ??
     (input?.to_asset
       ? (chainOfAsset(input.to_asset) ?? undefined)
       : undefined) ??
@@ -473,12 +565,15 @@ const BridgeProgressCard: React.FC<
         }
       : undefined;
 
-  const { status: liveStatus } = useBridgeStatus(sourceTxHash, {
-    fromChain,
-    toChain,
-    provider,
-    initialStatus,
-  });
+  const { status: liveStatus, record: liveRecord } = useBridgeStatus(
+    sourceTxHash,
+    {
+      fromChain,
+      toChain,
+      provider,
+      initialStatus,
+    },
+  );
 
   const destinationTxHash =
     liveStatus?.destinationTxHash ?? rawData.destination_tx_hash;
@@ -654,7 +749,6 @@ const BridgeProgressCard: React.FC<
       : (rawData.claim_required ?? false),
   };
 
-  const current = phaseIndex(data.phase);
   const steps = buildSteps(data, fromChainName, toChainName);
 
   const swap = isSwap(data);
@@ -667,23 +761,30 @@ const BridgeProgressCard: React.FC<
     swap,
   });
 
-  const borderTone =
+  const tone =
     outcome === "completed"
-      ? "border-emerald-200 bg-emerald-50/60"
+      ? {
+          card: "border-emerald-200",
+          badge: "bg-emerald-50",
+          color: SUCCESS_GREEN,
+        }
       : outcome === "failed"
-        ? "border-light-primary-red/30 bg-light-primary-red/5"
+        ? {
+            card: "border-light-primary-red/30",
+            badge: "bg-light-primary-red/10",
+            color: BRAND_RED,
+          }
         : outcome === "partial" || outcome === "refunded"
-          ? "border-amber-300/50 bg-amber-50"
-          : "border-light-matte-black/10 bg-white";
-
-  const iconColor =
-    outcome === "completed"
-      ? SUCCESS_GREEN
-      : outcome === "failed"
-        ? BRAND_RED
-        : outcome === "partial" || outcome === "refunded"
-          ? WARN_AMBER
-          : MUTED;
+          ? {
+              card: "border-amber-300/60",
+              badge: "bg-amber-50",
+              color: WARN_AMBER,
+            }
+          : {
+              card: "border-light-matte-black/10",
+              badge: "bg-light-primary-red/10",
+              color: BRAND_RED,
+            };
 
   const sourceExplorerUrl = resolveExplorerTxUrl(
     fromChain,
@@ -696,21 +797,77 @@ const BridgeProgressCard: React.FC<
     blockchains,
   );
 
+  // Amounts for the route summary. What actually arrived beats the
+  // quoted amount once the status reports it.
+  const sentAmount = data.from?.amountRaw
+    ? formatTokenValue(data.from.amountRaw, data.from.token)
+    : undefined;
+  const receivedAmount =
+    data.received_amount_raw && data.received_token
+      ? formatTokenValue(data.received_amount_raw, data.received_token)
+      : data.to?.amountRaw && data.to.token
+        ? formatTokenValue(data.to.amountRaw, data.to.token)
+        : undefined;
+
+  const activeStep = steps.find((s) => s.active);
+  const subtitle = outcome
+    ? data.bridge?.name
+      ? `via ${data.bridge.name}`
+      : undefined
+    : (activeStep?.hint ??
+      (data.bridge?.name ? `via ${data.bridge.name}` : undefined));
+  const showSteps = !outcome || (outcome === "completed" && stepsOpen);
+  const hasTx = Boolean(sourceTxHash || destinationTxHash);
+
   return (
-    <View className={`my-1.5 rounded-2xl border px-4 py-3.5 ${borderTone}`}>
-      <View className="flex-row items-center gap-2">
-        {outcome === "completed" ? (
-          <Check size={15} color={iconColor} />
-        ) : outcome === "failed" ? (
-          <AlertTriangle size={15} color={iconColor} />
-        ) : outcome ? (
-          <Info size={15} color={iconColor} />
-        ) : (
-          <Clock size={15} color={iconColor} />
-        )}
-        <Text className="text-xs font-bold uppercase tracking-wide text-light-matte-black">
-          {outcome ? copy.title : phaseCopy(data.phase, swap)}
-        </Text>
+    <View
+      className={`my-1.5 rounded-2xl border bg-white px-3.5 py-3 ${tone.card}`}
+    >
+      {/* Header: status badge + title. */}
+      <View className="flex-row items-center gap-3">
+        <View
+          className={`h-9 w-9 items-center justify-center rounded-full ${tone.badge}`}
+        >
+          {outcome === "completed" ? (
+            <Check size={18} color={tone.color} strokeWidth={2.75} />
+          ) : outcome === "failed" ? (
+            <AlertTriangle size={17} color={tone.color} />
+          ) : outcome ? (
+            <Info size={17} color={tone.color} />
+          ) : (
+            <Clock size={17} color={tone.color} />
+          )}
+        </View>
+        <View className="flex-1">
+          <Text className="text-[11px] font-bold uppercase tracking-wide text-gray-400">
+            {swap ? "Swap" : "Bridge"}
+          </Text>
+          <Text className="text-[15px] font-bold text-light-matte-black">
+            {outcome ? copy.title : phaseCopy(data.phase, swap)}
+          </Text>
+        </View>
+      </View>
+      {subtitle ? (
+        <Text className="text-[11px] text-gray-500 mt-1 ml-12">{subtitle}</Text>
+      ) : null}
+
+      {/* Route summary: what left where, and what lands where. */}
+      <View className="mt-3 flex-row items-center rounded-xl bg-gray-50 px-3 py-2.5">
+        <RouteEnd
+          amount={sentAmount}
+          caip2={fromChain}
+          chainName={fromChainName}
+          align="left"
+        />
+        <View className="mx-2 h-7 w-7 items-center justify-center rounded-full border border-light-matte-black/10 bg-white">
+          <ArrowRight size={13} color={BRAND_RED} />
+        </View>
+        <RouteEnd
+          amount={receivedAmount}
+          caip2={toChain}
+          chainName={toChainName}
+          align="right"
+        />
       </View>
 
       {/*
@@ -719,7 +876,7 @@ const BridgeProgressCard: React.FC<
         chain the refund landed on, and never route through agentErrorCopy.
       */}
       {copy.body ? (
-        <Text className="text-sm text-light-matte-black/80 mt-1.5">
+        <Text className="text-sm text-light-matte-black/80 mt-2.5">
           {copy.body}
         </Text>
       ) : null}
@@ -731,58 +888,119 @@ const BridgeProgressCard: React.FC<
         </Text>
       ) : null}
 
-      {/* The four-step lifecycle. Only meaningful while in flight. */}
-      {!outcome || outcome === "completed" ? (
-        <View className="mt-2">
-          {steps.map((step) => (
-            <StepRow key={step.key} step={step} />
+      {/* The lifecycle. Live while in flight; folded away once settled. */}
+      {showSteps ? (
+        <View className="mt-3 px-0.5">
+          {steps.map((step, i) => (
+            <StepRow
+              key={step.key}
+              step={step}
+              isLast={i === steps.length - 1}
+            />
           ))}
         </View>
       ) : null}
-
-      {/* Both tx hashes surfaced (§7.7). */}
-      <View className="mt-1.5 border-t border-light-matte-black/5 pt-1.5">
-        <TxLink
-          label={`Sent on ${fromChainName}`}
-          hash={sourceTxHash}
-          url={data.explorer_url ?? sourceExplorerUrl}
-          chain={fromChain}
-        />
-        <TxLink
-          label={`Received on ${toChainName}`}
-          hash={destinationTxHash}
-          url={destExplorerUrl}
-          chain={toChain}
-        />
-      </View>
-
-      {/*
-        A stalled leg needs a STATED RECOVERY PATH, never a spinner
-        forever (§7.7). Once we are past the source confirmation and still
-        unsettled, offer the user a way to act.
-      */}
-      {!outcome && data.claim_required ? (
-        <Text className="text-sm text-light-matte-black/80 mt-2">
-          Your funds are ready. Receive them with your {toChainName} wallet to
-          finish this transfer. Until then they stay safe and waiting.
-        </Text>
-      ) : null}
-      {!outcome && data.claim_required && onUserPrompt ? (
+      {outcome === "completed" ? (
         <Pressable
           onPress={() => {
             tapFeedback();
-            onUserPrompt(
-              `Receive my bridged funds on ${toChainName} for transfer ${sourceTxHash ?? ""}`.trim(),
-            );
+            setStepsOpen((v) => !v);
           }}
           accessibilityRole="button"
-          accessibilityLabel="Receive funds"
-          className="mt-2 self-start rounded-xl border-2 border-light-primary-red bg-light-primary-red/10 px-3 py-1.5 active:opacity-70"
+          accessibilityLabel={stepsOpen ? "Hide steps" : "Show steps"}
+          className="flex-row items-center gap-1 mt-2.5 self-start active:opacity-70"
         >
-          <Text className="text-[11px] font-bold text-light-matte-black">
-            Receive on {toChainName}
+          <Text className="text-[11px] font-bold text-light-primary-red">
+            {stepsOpen ? "Hide steps" : "Show steps"}
           </Text>
+          {stepsOpen ? (
+            <ChevronUp size={13} color={BRAND_RED} />
+          ) : (
+            <ChevronDown size={13} color={BRAND_RED} />
+          )}
         </Pressable>
+      ) : null}
+
+      {/* Both tx hashes surfaced (§7.7). */}
+      {hasTx ? (
+        <View className="mt-3 rounded-xl border border-light-matte-black/10 px-3 py-0.5">
+          <TxLink
+            label={`Sent on ${fromChainName}`}
+            hash={sourceTxHash}
+            url={data.explorer_url ?? sourceExplorerUrl}
+            chain={fromChain}
+          />
+          {sourceTxHash && destinationTxHash ? (
+            <View className="h-px bg-light-matte-black/5" />
+          ) : null}
+          <TxLink
+            label={`Received on ${toChainName}`}
+            hash={destinationTxHash}
+            url={destExplorerUrl}
+            chain={toChain}
+          />
+        </View>
+      ) : null}
+
+      {/* Taking far longer than it should, and not waiting on a claim:
+          say so plainly and give the user something to do, never a
+          spinner forever (§7.7). */}
+      {!outcome && !data.claim_required && liveRecord?.stalled ? (
+        <View className="mt-3 rounded-xl border border-amber-300/60 bg-amber-50 px-3 py-2.5">
+          <View className="flex-row items-start gap-2">
+            <View className="pt-0.5">
+              <AlertTriangle size={13} color={WARN_AMBER} />
+            </View>
+            <Text className="flex-1 text-xs text-light-matte-black/80">
+              {data.phase === "pending_source"
+                ? `This is taking much longer than usual, and the transaction has not shown up on ${fromChainName} yet. It may not have gone through. Check the link above before trying again.`
+                : "This is taking much longer than usual. Your funds are not lost: transfers like this can still settle. Check the link above for the latest."}
+            </Text>
+          </View>
+          {onUserPrompt && sourceTxHash ? (
+            <Pressable
+              onPress={() => {
+                tapFeedback();
+                onUserPrompt(`Check the status of my transfer ${sourceTxHash}`);
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Check status again"
+              className="mt-2.5 self-start flex-row items-center gap-1.5 rounded-xl border-2 border-light-primary-red bg-light-primary-red/10 px-3 py-1.5 active:opacity-70"
+            >
+              <RefreshCw size={12} color={BRAND_RED} />
+              <Text className="text-[11px] font-bold text-light-matte-black">
+                Check status again
+              </Text>
+            </Pressable>
+          ) : null}
+        </View>
+      ) : null}
+
+      {!outcome && data.claim_required ? (
+        <View className="mt-3 rounded-xl bg-light-primary-red/5 px-3 py-2.5">
+          <Text className="text-xs text-light-matte-black/80">
+            Your funds are ready. Receive them with your {toChainName} wallet to
+            finish this transfer. Until then they stay safe and waiting.
+          </Text>
+          {onUserPrompt ? (
+            <Pressable
+              onPress={() => {
+                tapFeedback();
+                onUserPrompt(
+                  `Receive my bridged funds on ${toChainName} for transfer ${sourceTxHash ?? ""}`.trim(),
+                );
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Receive funds"
+              className="mt-2.5 flex-row items-center justify-center gap-1.5 rounded-full bg-light-primary-red px-4 py-2.5 active:opacity-80"
+            >
+              <Text className="text-xs font-bold text-white">
+                Receive on {toChainName}
+              </Text>
+              <ArrowRight size={14} color="#ffffff" />
+            </Pressable>
+          ) : null}
+        </View>
       ) : null}
     </View>
   );

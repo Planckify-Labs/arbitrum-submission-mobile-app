@@ -71,16 +71,14 @@ export const FamilyKillSwitchCheck: SafetyCheck = {
   // dangerous (a broken adapter that could misroute funds) needs a harder,
   // separate lever than this one — don't repurpose this flag for that; add
   // one scoped to `actions: ["withdraw"]` when that need is real.
-  appliesTo: { actions: ["deposit"] },
+  appliesTo: { actions: ["deposit", "swap", "bridge"] },
   run: async (ctx) => {
-    // Deliberately NOT `requiresTarget`. A venue-routed deposit still carries
-    // `family`/`protocolSlug`, which is what ops actually types into a kill
-    // switch during an incident ("stop feeding scallop"); scoping this check
-    // to resolved targets would have made the lever silently inert for the
-    // one deposit shape that names the protocol and nothing else.
-    const keys = [ctx.target?.kind, ctx.family, ctx.protocolSlug].filter(
-      (k): k is string => typeof k === "string" && k.length > 0,
-    );
+    const keys = [
+      ctx.target?.kind,
+      ctx.family,
+      ctx.protocolSlug,
+      ctx.routeQuote?.provider,
+    ].filter((k): k is string => typeof k === "string" && k.length > 0);
     for (const key of keys) {
       if (isFamilyKilled(key)) {
         return {
@@ -273,6 +271,11 @@ export function setDefiEnabledChains(
 export const ChainEnabledCheck: SafetyCheck = {
   id: "chain-enabled-for-defi",
   layer: 3,
+  // DeFi routing only. `EXPO_PUBLIC_DEFI_ENABLED_CHAINS` is a yield-venue
+  // lever; letting it also gate swaps and bridges would take every chain
+  // off that list dark for moving value, which nobody setting it intends.
+  // Routes have their own lever: the provider kill switch.
+  appliesTo: { actions: ["deposit", "withdraw"] },
   run: async (ctx) => {
     if (defiEnabledChains === null) return { ok: true };
     return defiEnabledChains.has(String(ctx.chainId))

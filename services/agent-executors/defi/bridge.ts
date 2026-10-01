@@ -32,21 +32,35 @@ import type {
 import type { TWallet } from "@/constants/types/walletTypes";
 import { buildChainConfigFromBlockchain } from "@/hooks/useWallet.helpers";
 import {
+  assetContractFromCaip19,
   findChainByCaip2,
   parseCaip2,
   parseCaip19,
 } from "@/services/bridgeRoutes/caip";
 import { bridgeDestinationChoice } from "@/services/bridgeRoutes/destinationChoice";
-import { bridgeStatusStore } from "@/services/bridgeStatusStore";
 import {
   checkBridgeDestinationReadiness,
   isQuoteExpired,
   resolveSourceChain,
 } from "@/services/bridgeRoutes/execute";
+import { quoteBindingMismatch } from "@/services/bridgeRoutes/quoteBinding";
 import { buildBridgeQuotePayload } from "@/services/bridgeRoutes/quotePayload";
 import { adapterForQuote } from "@/services/bridgeRoutes/registry";
+import { simulationViolation } from "@/services/bridgeRoutes/simulationCheck";
+import { bridgeStatusStore } from "@/services/bridgeStatusStore";
 import type { Namespace } from "@/services/chains/types";
 import { confirmedCounterpartyStore } from "@/services/confirmedCounterpartyStore";
+import type { DefiErrorCode } from "@/services/defi/errors/defiErrors";
+import { releaseSubmission } from "@/services/defi/safety/checks/layer4-execution";
+import { runSafetyPipeline } from "@/services/defi/safety/registry";
+import { bindRouteSafetyChains } from "@/services/defi/safety/routeChainResolver";
+import { buildRouteSafetyContext } from "@/services/defi/safety/routeSafetyContext";
+import {
+  needsTokenConfirmation,
+  routeAck,
+  routeAckKey,
+  symbolMismatches,
+} from "@/services/swap/routeAck";
 import { addressesEqual } from "@/services/walletKit/chainInfo";
 import { walletKitRegistry } from "@/services/walletKit/registry";
 import type { BridgeExecutionPayload } from "@/services/walletKit/types";
@@ -277,8 +291,32 @@ function resolveDestinationAddress(
   );
 }
 
+/** Topology is a property of the route: same chain in and out is a swap. */
+function isSameChainRoute(fromChain: string, toChain: string): boolean {
+  return fromChain === toChain;
+}
+
 function chainConfigsFrom(context: ExecutorContext) {
   return context.blockchains.map(buildChainConfigFromBlockchain);
+}
+
+/**
+ * Chain reach is OURS, intersected with the provider's (swap spec §4.7).
+ * A route may only touch chains the app holds an active row for: the same
+ * list the cards render from. A provider reaching ~70 chains does not make
+ * them ours, and without a row there is no readiness check, no balance and
+ * no explorer, so funds could land somewhere the wallet cannot show.
+ */
+function routeChainsEnabled(
+  context: ExecutorContext,
+  fromChain: string,
+  toChain: string,
+): boolean {
+  const chains = chainConfigsFrom(context);
+  return (
+    findChainByCaip2(chains, fromChain) !== null &&
+    findChainByCaip2(chains, toChain) !== null
+  );
 }
 
 /**
@@ -345,12 +383,22 @@ export const bridgeQuote: MobileToolExecutor = (input, context) =>
     // Read-only: default to the user's own destination wallet so the
     // quote can succeed and show the full disclosure card instead of
     // hard-failing on a missing address (see `resolveDestinationAddress`).
-    const toAddress = resolveDestinationAddress(
-      context,
-      toChain,
-      optionalString(input, "to_address"),
-      true,
-    );
+    const toAddress = isSameChainRoute(fromChain, toChain)
+      ? context.wallet.address
+      : resolveDestinationAddress(
+          context,
+          toChain,
+          optionalString(input, "to_address"),
+          true,
+        );
+
+    // A capability boundary, not an error: plain copy on the card.
+    if (!routeChainsEnabled(context, fromChain, toChain)) {
+      return {
+        status: "success" as const,
+        data: { routable: false as const, reason: "chain_not_enabled" },
+      };
+    }
 
     let result: TBridgeQuoteResult;
     try {
@@ -372,10 +420,27 @@ export const bridgeQuote: MobileToolExecutor = (input, context) =>
 
     if (!result.routable) return noRoutePayload(result);
 
-    const blockers = await readinessFor(result.quote, context);
+    // A swap has no destination-readiness step (swap spec §4.1): the funds
+    // land in the signing wallet, which is already paying the fees, and a
+    // swap that cannot afford them fails its pre-sign dry run instead.
+    const blockers = isSameChainRoute(fromChain, toChain)
+      ? []
+      : await readinessFor(result.quote, context);
+    // Surfaced HERE, before approval, so the card can name both symbols and
+    // ask the user to confirm (§7.2). `bridge_execute` refuses without it.
+    const mismatches = symbolMismatches(
+      {
+        from: optionalString(input, "from_asset_symbol_hint"),
+        to: optionalString(input, "to_asset_symbol_hint"),
+      },
+      result.quote,
+    );
     return {
       status: "success" as const,
-      data: quotePayload(result.quote, blockers),
+      data: {
+        ...quotePayload(result.quote, blockers),
+        ...(mismatches.length > 0 ? { asset_symbol_mismatch: mismatches } : {}),
+      },
     };
   });
 
@@ -439,24 +504,48 @@ export const bridgeExecute: MobileToolExecutor = (input, context) =>
     const amountRaw = requireAmountRaw(input, "amount_raw");
     // WRITE: never default. The address must be the exact one the quote
     // showed and the user approved — see `resolveDestinationAddress`.
-    const toAddress = resolveDestinationAddress(
-      context,
-      toChain,
-      optionalString(input, "to_address"),
-      false,
-    );
+    const sameChain = isSameChainRoute(fromChain, toChain);
+    const toAddress = sameChain
+      ? context.wallet.address
+      : resolveDestinationAddress(
+          context,
+          toChain,
+          optionalString(input, "to_address"),
+          false,
+        );
     // The floor the user actually read. When they re-priced the card by
     // switching destination, the model's `min_receive_raw` still belongs
     // to the pre-switch quote — enforcing it would either reject a
     // transfer they already accepted (new route slightly worse) or
     // guarantee less than the figure printed in front of them (new route
     // better). The pick carries its own number for exactly that reason.
-    const choice = bridgeDestinationChoice.getChoice(toChain);
+    // A swap pays the signer. A bridge-destination pick left over for this
+    // chain must not redirect it, nor lend it another route's floor.
+    const choice = sameChain
+      ? null
+      : bridgeDestinationChoice.getChoice(toChain);
     const minReceiveRaw =
       choice?.minReceiveRaw ?? optionalString(input, "min_receive_raw");
+    // A swap without the floor the user read has nothing to hold the fresh
+    // quote to (spec §7.2).
+    if (sameChain && !minReceiveRaw) {
+      throw new ExecutorError(
+        ExecutorErrorCode.InvalidInput,
+        "min_receive_required",
+      );
+    }
 
     if (!context.account && context.wallet.namespace === "eip155") {
       throw new ExecutorError(ExecutorErrorCode.WalletCannotExecute);
+    }
+
+    // Both trust anchors enforce §4.7: a stale or compromised backend
+    // cannot get this device to sign toward a chain it does not know.
+    if (!routeChainsEnabled(context, fromChain, toChain)) {
+      throw new ExecutorError(
+        ExecutorErrorCode.UnsupportedChain,
+        "chain_not_enabled",
+      );
     }
 
     let result: TBridgeQuoteResult;
@@ -520,18 +609,51 @@ export const bridgeExecute: MobileToolExecutor = (input, context) =>
       );
     }
 
+    // The fresh quote must be the route the user approved: same chains,
+    // same tokens, no more than the approved amount, paid by this wallet to
+    // the destination the card showed. Every payload check after this point
+    // compares against the QUOTE, so this is what ties them to the approval.
+    const bindingMismatch = quoteBindingMismatch(quote, {
+      fromChain,
+      toChain,
+      fromAsset,
+      toAsset,
+      amountRaw,
+      fromAddress: context.wallet.address,
+      toAddress,
+    });
+    if (bindingMismatch) {
+      if (__DEV__) {
+        console.warn("[bridge/execute] re-quote does not match approval:", {
+          field: bindingMismatch,
+        });
+      }
+      throw new ExecutorError(
+        ExecutorErrorCode.InvalidInput,
+        "bridge_payload_mismatch",
+      );
+    }
+
     // Honour the protection number the user approved against.
     if (minReceiveRaw) {
       try {
         const minReceive = BigInt(minReceiveRaw);
         const actualMin = BigInt(quote.toAmountMinRaw);
-        // For CCTP burn-and-mint routes, the delivery fee charged by Circle's Forwarding
-        // Service fluctuates slightly with destination gas conditions between blocks.
-        // A sub-cent fluctuation (e.g. 0.000001 - 0.01 USDC = 10,000 micro-units) is
-        // normal dynamic forwarder fee variation, not a market slippage move.
-        const isCctp =
-          quote.bridge?.key === "cctp" || quote.provider?.startsWith("circle");
-        const feeToleranceRaw = isCctp ? 10_000n : 0n; // 0.01 USDC tolerance for dynamic CCTP forwarder fee
+        // USDC over CCTP pays a forwarding / relay fee that moves slightly
+        // with destination gas between two quotes seconds apart. Up to one
+        // cent of that drift is fee noise, not a market move, so it may not
+        // fail a transfer the user already accepted. One cent in the
+        // DESTINATION token's own decimals (6 on EVM, 7 on Stellar), never
+        // a raw constant. EURC (`circle-cctpx`) pays its fee in native gas
+        // and delivers the full amount, so its floor gets no tolerance.
+        const floatingFee =
+          quote.provider === "circle-cctp" || quote.provider === "cctp";
+        const decimals = quote.to.token.decimals;
+        const feeToleranceRaw =
+          floatingFee && Number.isInteger(decimals) && decimals >= 2
+            ? 10n ** BigInt(decimals - 2)
+            : 0n;
+        const isCctp = floatingFee;
         if (actualMin + feeToleranceRaw < minReceive) {
           if (__DEV__) {
             console.warn(
@@ -576,7 +698,8 @@ export const bridgeExecute: MobileToolExecutor = (input, context) =>
 
     // A blocking readiness failure means the funds cannot arrive, or
     // cannot be moved once they do. Refuse rather than strand (§7.5).
-    const blockers = await readinessFor(quote, context);
+    // Bridges only: a swap pays out to the signer (see `bridgeQuote`).
+    const blockers = sameChain ? [] : await readinessFor(quote, context);
     const blocking = blockers.find((b) => b.severity === "blocking");
     if (blocking) {
       throw new ExecutorError(
@@ -614,7 +737,8 @@ export const bridgeExecute: MobileToolExecutor = (input, context) =>
           );
         }
         if (!quote.from.token.address) {
-          if (gasBalance < BigInt(quote.from.amountRaw)) {
+          // Sending the whole native balance leaves nothing for gas.
+          if (gasBalance <= BigInt(quote.from.amountRaw)) {
             throw new ExecutorError(
               ExecutorErrorCode.InsufficientFunds,
               "insufficient_balance",
@@ -651,6 +775,142 @@ export const bridgeExecute: MobileToolExecutor = (input, context) =>
       );
     }
 
+    // Advisory symbol hints (spec §7.2): the model resolved a symbol to a
+    // CAIP-19, and may have picked the wrong variant (USDC.e for USDC). A
+    // mismatch is neither a silent pass nor a hard block: the quote card
+    // names both symbols and the user confirms there. Without that
+    // confirmation, refuse and send them back to it.
+    const ackKey = routeAckKey(quote);
+    const ack = routeAck.get(ackKey);
+    const mismatches = symbolMismatches(
+      {
+        from: optionalString(input, "from_asset_symbol_hint"),
+        to: optionalString(input, "to_asset_symbol_hint"),
+      },
+      quote,
+    );
+    if (mismatches.length > 0 && !ack?.symbolsConfirmed) {
+      throw new ExecutorError(
+        ExecutorErrorCode.StalePrecondition,
+        "asset_symbol_mismatch",
+      );
+    }
+    // Token provenance (spec §8.4 L1, T8): the token this route delivers
+    // must be one we vouch for at that exact address on that chain, or the
+    // user must have confirmed it on the card. A real contract that merely
+    // shares a symbol (a fake "USDC") passes every other check here: it has
+    // code, the router is allowlisted, the quote binds, the dry run succeeds.
+    if (needsTokenConfirmation(quote) && !ack?.unverifiedConfirmed) {
+      throw new ExecutorError(
+        ExecutorErrorCode.StalePrecondition,
+        "unverified_token_unconfirmed",
+      );
+    }
+
+    // ── Route safety pipeline (swap spec §8.4) ─────────────────────────
+    // The price-impact acknowledgement is the USER's (recorded by the swap
+    // card for this exact route and amount), never a tool argument: a
+    // model-supplied number would defeat the gate.
+    bindRouteSafetyChains(context.blockchains);
+    let allowedTargets: readonly string[] | undefined;
+    try {
+      allowedTargets = await adapter.targetAllowlist?.(quote.from.chain);
+    } catch {
+      allowedTargets = undefined;
+    }
+    // One route, one submission: a double tap or a retried tool call must
+    // not send the same transfer twice. Released on every failure below;
+    // kept on success until it expires, like the deposit path.
+    const submissionKey = [
+      "route",
+      context.wallet.address,
+      quote.from.chain,
+      quote.from.token.caip19,
+      quote.to.chain,
+      quote.to.token.caip19,
+      quote.from.amountRaw,
+      toAddress,
+    ].join(":");
+    const safetyCtx = buildRouteSafetyContext({
+      quote,
+      wallet: context.wallet,
+      stage: "submit",
+      toolInput: input,
+      priceImpactAckBps: sameChain ? ack?.impactBps : undefined,
+      allowedTargets,
+      submissionKey,
+    });
+    const pipelineResult = await runSafetyPipeline(safetyCtx);
+    if (!pipelineResult.ok) {
+      if (typeof __DEV__ !== "undefined" && __DEV__) {
+        console.warn(
+          "[bridge/execute] safety pipeline blocked quote:",
+          pipelineResult,
+        );
+      }
+      // Never release a key some OTHER in-flight call is holding.
+      if (pipelineResult.fail !== "duplicate_submission") {
+        releaseSubmission(submissionKey);
+      }
+      throw routeSafetyError(pipelineResult.fail);
+    }
+
+    try {
+      // Dry run before signing (§8.4 L4), for payloads the device received
+      // as opaque calldata or transaction bytes. Circle and Stellar payloads
+      // are verified field by field by their own adapters instead.
+      if (
+        sourceKit?.simulateBridgeExecution &&
+        (quote.execution.kind === "evm_transaction" ||
+          quote.execution.kind === "serialized_transaction")
+      ) {
+        const fromContract = assetContractFromCaip19(quote.from.token.caip19);
+        const toContract = assetContractFromCaip19(quote.to.token.caip19);
+        const watch = [
+          ...new Set<string | null>([
+            fromContract,
+            null,
+            ...(sameChain ? [toContract] : []),
+          ]),
+        ];
+        const sim = await sourceKit.simulateBridgeExecution({
+          wallet: context.wallet,
+          chain: sourceChain,
+          payload: quote.execution as BridgeExecutionPayload,
+          watch,
+        });
+        const namespace = sourceChain.namespace as Namespace;
+        const violation = simulationViolation(sim, {
+          fromAsset: fromContract,
+          amountRaw: BigInt(quote.from.amountRaw),
+          nativeValue:
+            quote.execution.kind === "evm_transaction"
+              ? BigInt(quote.execution.value || "0")
+              : 0n,
+          output: sameChain
+            ? { asset: toContract, minRaw: BigInt(quote.toAmountMinRaw) }
+            : undefined,
+          sameAsset: (a, b) => a === b || addressesEqual(namespace, a, b),
+        });
+        if (violation) {
+          if (__DEV__) {
+            console.warn("[bridge/execute] dry run refused the route:", {
+              violation,
+            });
+          }
+          throw new ExecutorError(
+            ExecutorErrorCode.InvalidInput,
+            violation === "reverted"
+              ? "route_simulation_failed"
+              : "bridge_payload_mismatch",
+          );
+        }
+      }
+    } catch (err) {
+      releaseSubmission(submissionKey);
+      throw err;
+    }
+
     // §7.5 — optional gas top up, opted into explicitly by the user via
     // the card's inline "Add gas" action. It is a SECOND TRANSACTION and
     // is reported as its own line, never folded into the main transfer
@@ -665,13 +925,18 @@ export const bridgeExecute: MobileToolExecutor = (input, context) =>
       gasTopUpUsd > 0 &&
       adapter.gasTopUp
     ) {
-      gasTopUp = await runGasTopUp({
-        adapter,
-        quote,
-        amountUsd: gasTopUpUsd,
-        wallet: context.wallet,
-        sourceChain,
-      });
+      try {
+        gasTopUp = await runGasTopUp({
+          adapter,
+          quote,
+          amountUsd: gasTopUpUsd,
+          wallet: context.wallet,
+          sourceChain,
+        });
+      } catch (err) {
+        releaseSubmission(submissionKey);
+        throw err;
+      }
     }
 
     let submission: Awaited<ReturnType<typeof adapter.execute>>;
@@ -683,6 +948,9 @@ export const bridgeExecute: MobileToolExecutor = (input, context) =>
         chain: sourceChain,
       });
     } catch (err) {
+      // Nothing was submitted (a submitted transfer resolves with its hash
+      // even when unconfirmed), so the key is free again.
+      releaseSubmission(submissionKey);
       if (typeof __DEV__ !== "undefined" && __DEV__) {
         console.error(
           "[bridge/execute] adapter.execute failed with error:",
@@ -722,7 +990,9 @@ export const bridgeExecute: MobileToolExecutor = (input, context) =>
     // Submitted — the pick has served its bridge, so retire the interlock.
     // Leaving it set would measure a LATER bridge to this chain against a
     // stale choice and fail closed on a perfectly good address.
-    bridgeDestinationChoice.clear(toChain);
+    // The route's confirmations were for this submission only.
+    routeAck.clear(ackKey);
+    if (!sameChain) bridgeDestinationChoice.clear(toChain);
 
     // Kick off real-time background status tracking immediately
     try {
@@ -740,7 +1010,10 @@ export const bridgeExecute: MobileToolExecutor = (input, context) =>
       });
     } catch (err) {
       if (__DEV__) {
-        console.warn("[bridge/execute] failed to register status polling:", err);
+        console.warn(
+          "[bridge/execute] failed to register status polling:",
+          err,
+        );
       }
     }
 
@@ -765,6 +1038,66 @@ export const bridgeExecute: MobileToolExecutor = (input, context) =>
       },
     };
   });
+
+/**
+ * A route safety refusal as a curated executor error. The pipeline's codes
+ * were written for deposits ("this deposit is already being processed"),
+ * so the route path names its own reasons rather than borrowing that copy.
+ */
+function routeSafetyError(fail: DefiErrorCode): ExecutorError {
+  switch (fail) {
+    case "price_impact_too_high":
+      return new ExecutorError(
+        ExecutorErrorCode.InvalidInput,
+        "price_impact_too_high",
+      );
+    case "slippage_too_high":
+      return new ExecutorError(
+        ExecutorErrorCode.InvalidInput,
+        "quote_floor_invalid",
+      );
+    case "target_not_allowlisted":
+    case "target_not_a_contract":
+    case "decoded_intent_mismatch":
+    case "decimals_mismatch":
+      return new ExecutorError(
+        ExecutorErrorCode.InvalidInput,
+        "bridge_payload_mismatch",
+      );
+    case "family_disabled":
+      return new ExecutorError(
+        ExecutorErrorCode.UnsupportedChain,
+        "provider_disabled",
+      );
+    case "duplicate_submission":
+      return new ExecutorError(
+        ExecutorErrorCode.StalePrecondition,
+        "route_already_submitted",
+      );
+    case "deposit_failed":
+      return new ExecutorError(
+        ExecutorErrorCode.InvalidInput,
+        "route_simulation_failed",
+      );
+    case "unsupported_chain":
+      return new ExecutorError(ExecutorErrorCode.UnsupportedChain);
+    case "unsupported_asset":
+      return new ExecutorError(
+        ExecutorErrorCode.InvalidInput,
+        "unsupported_asset",
+      );
+    case "counterparty_blocked":
+      return new ExecutorError(
+        ExecutorErrorCode.InvalidInput,
+        "counterparty_blocked",
+      );
+    default:
+      return new ExecutorError(
+        ExecutorErrorCode.InvalidInput,
+        "bridge_payload_mismatch",
+      );
+  }
+}
 
 function optionalNumber(input: ToolInput, key: string): number | undefined {
   const value = input[key];

@@ -15,13 +15,17 @@ import { fromBase64 } from "@mysten/bcs";
 import { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
 import type { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
 import { Transaction } from "@mysten/sui/transactions";
+import { normalizeStructTag, normalizeSuiAddress } from "@mysten/sui/utils";
 import type { ChainConfig } from "@/constants/configs/chainConfig";
 import { createSuiGrpcJsonRpcTransport } from "@/services/chains/sui/grpcTransport";
+import { simulateSuiTransaction } from "@/services/chains/sui/simulation";
 import { getSuiSignerForWallet } from "@/services/walletService";
 import {
   type BridgeDestinationReadinessArgs,
   BridgePayloadUnsupportedError,
   type BridgeReadinessBlocker,
+  type BridgeSimulation,
+  type SimulateBridgeExecutionArgs,
   type SubmitBridgeExecutionArgs,
 } from "../types";
 
@@ -29,6 +33,9 @@ const SUI_NAMESPACE = "sui" as const;
 
 /** Sui's own gas coin, modelled as an ordinary coin type. */
 const SUI_COIN_TYPE = "0x2::sui::SUI";
+
+/** A dry run's gas is paid in SUI: 0.1 SUI is far above any route's budget. */
+const SUI_SIM_NATIVE_FEE_ALLOWANCE = 100_000_000n;
 
 export function suiCaip2For(chain: ChainConfig): string | null {
   // Sui's CAIP-2 reference is the network name, and unlike Stellar it
@@ -88,6 +95,77 @@ export async function suiSubmitBridgeExecution({
     options: { showEffects: false },
   });
   return digest;
+}
+
+function coinKey(coinType: string): string {
+  try {
+    return normalizeStructTag(coinType);
+  } catch {
+    return coinType;
+  }
+}
+
+/**
+ * Dry-run the provider's transaction bytes (the exact bytes that would be
+ * signed) and report the signer's balance changes. Sui's dry run reports
+ * EVERY balance change, so the result includes unwatched coins too: a coin
+ * leaving the wallet that the route never mentioned is exactly what the
+ * caller's check looks for.
+ */
+export async function suiSimulateBridgeExecution({
+  wallet,
+  chain,
+  payload,
+  watch,
+}: SimulateBridgeExecutionArgs): Promise<BridgeSimulation> {
+  if (
+    payload.kind !== "serialized_transaction" ||
+    payload.encoding !== "base64" ||
+    chain.namespace !== SUI_NAMESPACE
+  ) {
+    return { status: "unsupported" };
+  }
+  const client = new SuiJsonRpcClient({
+    transport: createSuiGrpcJsonRpcTransport(chain.network),
+    network: chain.network,
+  });
+  const summary = await simulateSuiTransaction(client, {
+    txBase64: payload.payload,
+    sender: wallet.address,
+  });
+  if (!summary) return { status: "unsupported" };
+  if (summary.status !== "success") return { status: "reverted" };
+
+  const me = normalizeSuiAddress(wallet.address);
+  const byCoin = new Map<string, bigint>();
+  for (const change of summary.balanceChanges) {
+    if (!change.owner || normalizeSuiAddress(change.owner) !== me) continue;
+    const key = coinKey(change.coinType);
+    byCoin.set(key, (byCoin.get(key) ?? 0n) + change.amount);
+  }
+  const suiKey = coinKey(SUI_COIN_TYPE);
+  const deltas: { asset: string | null; delta: bigint }[] = [];
+  // Watched coins first, with an explicit zero when unchanged: the dry run
+  // lists every change, so absence genuinely means "did not move".
+  const seen = new Set<string>();
+  for (const asset of watch) {
+    const key = asset === null ? suiKey : coinKey(asset);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deltas.push({
+      asset: key === suiKey ? null : asset,
+      delta: byCoin.get(key) ?? 0n,
+    });
+  }
+  for (const [key, delta] of byCoin) {
+    if (seen.has(key)) continue;
+    deltas.push({ asset: key === suiKey ? null : key, delta });
+  }
+  return {
+    status: "ok",
+    deltas,
+    nativeFeeAllowance: SUI_SIM_NATIVE_FEE_ALLOWANCE,
+  };
 }
 
 /** Enough SUI to pay a couple of transactions afterwards. */

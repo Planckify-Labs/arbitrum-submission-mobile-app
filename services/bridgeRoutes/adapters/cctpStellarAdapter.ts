@@ -48,10 +48,12 @@ import type {
   BridgeRouteAdapter,
   BridgeSubmission,
 } from "../types";
+import { circleEvmCctpFacts } from "./circle/appKitBridge";
 import { verifyStellarCctpPayload } from "./stellarCctpVerify";
 
 export const cctpStellarBridgeAdapter: BridgeRouteAdapter = {
   key: "cctp",
+  kinds: ["bridge"] as const,
 
   /**
    * Route fallback only (the backend stamps the provider on the quote):
@@ -78,9 +80,22 @@ export const cctpStellarBridgeAdapter: BridgeRouteAdapter = {
     return bridgeApi.getQuote(req);
   },
 
+  /**
+   * The only EVM contract an EVM → Stellar burn may call: Circle's CCTP V2
+   * `TokenMessenger` for that chain, from App Kit's pinned definitions. A
+   * Stellar source has no EVM target, so it answers an empty list.
+   */
+  async targetAllowlist(chain: TCaip2): Promise<readonly string[]> {
+    const parsed = parseCaip2(chain);
+    const chainId = Number(parsed?.reference);
+    if (parsed?.namespace !== "eip155" || !Number.isInteger(chainId)) return [];
+    const pins = circleEvmCctpFacts(chainId);
+    return pins ? [pins.tokenMessenger] : [];
+  },
+
   execute(q: TBridgeQuote, ctx: BridgeExecContext): Promise<BridgeSubmission> {
     try {
-      verifyStellarCctpPayload(q);
+      verifyStellarCctpPayload(q, circleEvmCctpFacts);
     } catch (err) {
       if (typeof __DEV__ !== "undefined" && __DEV__) {
         console.warn("[cctp-stellar] payload does not match the quote", err);

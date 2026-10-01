@@ -64,6 +64,30 @@ const COPY: Record<string, string> = {
     "The on-chain situation moved since I prepared this. Let me re-check and offer a safer plan.",
   quote_stale:
     "The price moved while preparing this. Let me get a fresh quote.",
+  // swap / route safety reasons
+  price_impact_too_high:
+    "This swap would move the price a lot. Review the price impact on the card and confirm it there, or try a smaller amount.",
+  provider_disabled:
+    "That swap route is paused right now. Please try again later.",
+  bridge_payload_mismatch:
+    "I couldn't verify this route, so I didn't sign it. Please get a fresh quote.",
+  quote_floor_invalid:
+    "This quote doesn't guarantee a safe minimum, so I didn't sign it. Please get a fresh quote.",
+  min_receive_required:
+    "I need the minimum amount shown on the quote before swapping. Let me get a fresh quote.",
+  asset_symbol_mismatch:
+    "This route uses a different token than the one you named. Check the token on the quote card and confirm it there first.",
+  unverified_token_unconfirmed:
+    "We can't verify the token you'd receive. Check its address on the quote card and confirm it there first.",
+  chain_not_enabled: "We do not support that network yet.",
+  unknown_token:
+    "I couldn't find that token on this network. Let me look it up and try again.",
+  route_already_submitted:
+    "This transfer is already being sent. Check your activity before trying again.",
+  route_simulation_failed:
+    "This route would fail if sent, so I didn't sign it. Let me get a fresh quote.",
+  counterparty_blocked:
+    "I can't send funds through this route. Please try a different one.",
   // insufficient_funds family
   insufficient_balance:
     "You don't have enough balance for this, including a little for gas.",
