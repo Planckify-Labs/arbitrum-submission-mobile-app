@@ -43,6 +43,7 @@ import {
 import {
   ExecutorError,
   ExecutorErrorCode,
+  logExecutorDetail,
   type MobileToolExecutor,
   optionalString,
   requireString,
@@ -347,15 +348,17 @@ export const getWalletStellarAssets: MobileToolExecutor = (input, context) =>
           const parsed = JSON.parse(cachedRaw);
           allTokens = Array.isArray(parsed) ? (parsed as TToken[]) : [];
         } catch {
+          logExecutorDetail("Stellar token list fetch failed", err);
           throw new ExecutorError(
             ExecutorErrorCode.NetworkError,
-            `failed to fetch Stellar token list: ${err instanceof Error ? err.message : String(err)}`,
+            "token_list_unavailable",
           );
         }
       } else {
+        logExecutorDetail("Stellar token list fetch failed", err);
         throw new ExecutorError(
           ExecutorErrorCode.NetworkError,
-          `failed to fetch Stellar token list: ${err instanceof Error ? err.message : String(err)}`,
+          "token_list_unavailable",
         );
       }
     }

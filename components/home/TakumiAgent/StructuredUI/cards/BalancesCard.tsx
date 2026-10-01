@@ -19,6 +19,7 @@ import type {
   WalletBalancesOutput,
   WalletBalancesPayload,
 } from "@/services/agent-executors/balancePayload";
+import { agentErrorCopy } from "../agentErrorCopy";
 import type { ToolComponentProps } from "../types";
 
 const BRAND_RED = "#c71c4b";
@@ -219,7 +220,7 @@ const BalancesCard: React.FC<
         </View>
         {normalized.error ? (
           <Text className="text-sm text-light-matte-black/80 mt-1.5">
-            {normalized.error}
+            {agentErrorCopy(normalized.error)}
           </Text>
         ) : null}
       </View>

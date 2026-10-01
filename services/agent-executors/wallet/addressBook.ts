@@ -21,6 +21,7 @@ import type { TAddressBookEntry } from "@/constants/types/addressBookTypes";
 import {
   ExecutorError,
   ExecutorErrorCode,
+  logExecutorDetail,
   type MobileToolExecutor,
   optionalString,
   requireString,
@@ -67,9 +68,10 @@ export const getAddressBook: MobileToolExecutor = (_input, _context) =>
     try {
       entries = await addressBookApi.getAll();
     } catch (err) {
+      logExecutorDetail("address book fetch failed", err);
       throw new ExecutorError(
         ExecutorErrorCode.NetworkError,
-        `failed to fetch address book: ${err instanceof Error ? err.message : String(err)}`,
+        "address_book_unavailable",
       );
     }
 
@@ -110,9 +112,10 @@ export const getAddressBookEntry: MobileToolExecutor = (input, _context) =>
           `contact with id "${id}" not found`,
         );
       }
+      logExecutorDetail("contact fetch failed", err);
       throw new ExecutorError(
         ExecutorErrorCode.NetworkError,
-        `failed to fetch contact: ${msg}`,
+        "address_book_unavailable",
       );
     }
 
@@ -155,9 +158,10 @@ export const searchAddressBook: MobileToolExecutor = (input, _context) =>
     try {
       entries = await addressBookApi.getAll();
     } catch (err) {
+      logExecutorDetail("address book fetch failed", err);
       throw new ExecutorError(
         ExecutorErrorCode.NetworkError,
-        `failed to fetch address book: ${err instanceof Error ? err.message : String(err)}`,
+        "address_book_unavailable",
       );
     }
 

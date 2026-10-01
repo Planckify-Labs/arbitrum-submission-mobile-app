@@ -182,6 +182,17 @@ Apply the pattern uniformly:
   paired with the `PaymentError` component which gates `devMessage`
   behind `__DEV__`. Reach for it before writing inline branches.
 
+**Endpoints never reach users or the LLM (2026-10-01 incident):** ky's own
+`TimeoutError`/`HTTPError` messages embed the full request URL
+(`Request timed out: GET https://<api host>/redeem/<id>`), and
+`activity-detail.tsx` rendered it. Defence is layered, keep all layers:
+`api/utils/safe-http-errors.ts` (URL-free timeout + `beforeError` scrub, wired
+on every ky instance in `constants/configs/ky.ts`), `services/errors/leakGuard.ts`
+(`scrubToolFailure` in the agent dispatcher; `redactEndpoints` for dApp-facing
+EIP-1193 errors), curated `ExecutorError` reasons + `logExecutorDetail` for
+raw detail, and `pnpm check:error-leaks` (runs in `pnpm test`; mark a
+reviewed line `// safe-error-ok: <reason>`).
+
 Already-sanitised surfaces to mirror when adding new ones:
 `services/transcribeAudio.ts`, `hooks/useVoiceTranscription.ts`,
 `hooks/deposit/useDepositState.ts`, `app/pay-merchant/receipt.tsx`,

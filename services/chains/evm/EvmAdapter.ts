@@ -37,6 +37,7 @@ import { proxyAuthHeaders, rpcFetchOptions } from "@/services/rpc/proxyAuth";
 import { isDefaultToken } from "@/services/tokens/tokenList";
 import { addWatchedAsset } from "@/services/tokens/watchedAssets";
 import { getAccountForWallet } from "@/services/walletService";
+import { redactEndpoints } from "../../errors/leakGuard";
 import { Bundler, getBundlerConfig, type UserOperation } from "./bundler";
 import { type UserChain, UserChainStore } from "./chainStore";
 import {
@@ -1622,7 +1623,9 @@ export class EvmAdapter implements ChainAdapter {
             ...receipts,
             {
               status: "FAILED",
-              error: e instanceof Error ? e.message : String(e),
+              error: redactEndpoints(
+                e instanceof Error ? e.message : String(e),
+              ),
             },
             ...payload.calls
               .slice(i + 1)

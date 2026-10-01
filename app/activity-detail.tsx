@@ -145,11 +145,8 @@ export default function ActivityDetailScreen() {
             Failed to load activity
           </Text>
           <Text className="text-light-matte-black text-center">
-            {redemptionError?.message ||
-              purchaseError?.message ||
-              transferError?.message ||
-              paymentError?.message ||
-              "An error occurred while loading the activity details."}
+            We couldn't load this activity. Please check your connection and try
+            again.
           </Text>
         </View>
       </SafeAreaView>

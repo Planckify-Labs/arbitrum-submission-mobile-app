@@ -37,6 +37,7 @@ import {
 import {
   ExecutorError,
   ExecutorErrorCode,
+  logExecutorDetail,
   type MobileToolExecutor,
   optionalString,
   requireString,
@@ -376,15 +377,17 @@ export const getSuiWalletTokens: MobileToolExecutor = (input, context) =>
           const parsed = JSON.parse(cachedRaw);
           allTokens = Array.isArray(parsed) ? (parsed as TToken[]) : [];
         } catch {
+          logExecutorDetail("Sui token list fetch failed", err);
           throw new ExecutorError(
             ExecutorErrorCode.NetworkError,
-            `failed to fetch Sui token list: ${err instanceof Error ? err.message : String(err)}`,
+            "token_list_unavailable",
           );
         }
       } else {
+        logExecutorDetail("Sui token list fetch failed", err);
         throw new ExecutorError(
           ExecutorErrorCode.NetworkError,
-          `failed to fetch Sui token list: ${err instanceof Error ? err.message : String(err)}`,
+          "token_list_unavailable",
         );
       }
     }

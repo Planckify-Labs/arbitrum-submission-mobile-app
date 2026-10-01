@@ -2,6 +2,10 @@ import type { NormalizedOptions } from "ky";
 import ky from "ky";
 import { ApiConflictError } from "@/api/types/errors";
 import {
+  fetchWithSafeTimeout,
+  scrubHttpErrorMessage,
+} from "@/api/utils/safe-http-errors";
+import {
   clearTokens,
   getAccessToken,
   getAccessTokenForWallet,
@@ -77,24 +81,32 @@ export const debugApiConfig = () => {
   console.log("===============================");
 };
 
+const baseFetch = (input: RequestInfo | URL, init?: RequestInit) => {
+  if (
+    init?.signal &&
+    typeof (init.signal as AbortSignal & { throwIfAborted?: () => void })
+      .throwIfAborted !== "function"
+  ) {
+    const { signal: _signal, ...restInit } = init;
+    return fetch(input, restInit);
+  }
+  return fetch(input, init);
+};
+
+// ky's own timeout / HTTPError messages embed the full request URL, which
+// then reached the UI via `error.message`. Timeout is handled in `fetch`
+// (ApiTimeoutError, URL-free) and ky's is disabled; HTTPError is scrubbed in
+// `beforeError`. Every instance below must spread `SAFE_ERROR_HOOKS`.
+const SAFE_ERROR_HOOKS = { beforeError: [scrubHttpErrorMessage] };
+
 const createBaseConfig = () => ({
   prefixUrl: API_CONFIG.url,
-  timeout: API_CONFIG.timeout,
+  timeout: false as const,
   retry: {
     limit: API_CONFIG.retryLimit,
     methods: ["get"],
   },
-  fetch: (input: RequestInfo | URL, init?: RequestInit) => {
-    if (
-      init?.signal &&
-      typeof (init.signal as AbortSignal & { throwIfAborted?: () => void })
-        .throwIfAborted !== "function"
-    ) {
-      const { signal: _signal, ...restInit } = init;
-      return fetch(input, restInit);
-    }
-    return fetch(input, init);
-  },
+  fetch: fetchWithSafeTimeout(baseFetch, API_CONFIG.timeout),
 });
 
 // Key names duplicated here (rather than exported from useAuth.ts) to
@@ -383,6 +395,7 @@ export const api = ky.create({
       },
     ],
     afterResponse: [handleApiResponse],
+    ...SAFE_ERROR_HOOKS,
   },
 });
 
@@ -418,6 +431,7 @@ export const optionalAuthApi = ky.create({
       },
     ],
     afterResponse: [handleApiResponse],
+    ...SAFE_ERROR_HOOKS,
   },
 });
 
@@ -447,6 +461,7 @@ export const createApiForWallet = (walletAddress: string) =>
         },
       ],
       afterResponse: [handleApiResponse],
+      ...SAFE_ERROR_HOOKS,
     },
   });
 
@@ -459,5 +474,6 @@ export const publicApi = ky.create({
       },
     ],
     afterResponse: [handleApiResponse],
+    ...SAFE_ERROR_HOOKS,
   },
 });

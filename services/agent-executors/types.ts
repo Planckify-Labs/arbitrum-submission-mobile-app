@@ -333,6 +333,15 @@ function isDev(): boolean {
 }
 
 /**
+ * Dev-only sink for the raw detail behind a curated executor failure. Raw
+ * error text must never ride on `ExecutorError.message` (it becomes the
+ * tool result's `reason`, which reaches the LLM and the chat UI).
+ */
+export function logExecutorDetail(label: string, err: unknown): void {
+  if (isDev()) console.warn(`[agent-executors] ${label}:`, err);
+}
+
+/**
  * Retryable-error predicate used by the higher-level retry wrapper in
  * AGENT_PROTOCOL §10 "Retry Logic". Exported so task 09 and the retry
  * wrapper (`./retry.ts`) can reuse it.

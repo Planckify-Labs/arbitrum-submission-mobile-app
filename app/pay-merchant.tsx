@@ -271,6 +271,8 @@ const makeLocalError = (
 
 const classifyError = (err: unknown): LocalError => {
   const code = classifyPaymentError(err);
+  // Raw text is for dev builds only; production state never carries it.
+  if (!__DEV__) return { code };
 
   let devMessage: string | undefined;
   if (err && typeof err === "object") {
@@ -282,7 +284,7 @@ const classifyError = (err: unknown): LocalError => {
     };
     const parts: string[] = [];
     if (e.name) parts.push(`name=${e.name}`);
-    if (e.message) parts.push(e.message);
+    if (e.message) parts.push(e.message); // safe-error-ok: __DEV__ only (early return above)
     const httpStatus = e.status ?? e.response?.status;
     if (httpStatus) parts.push(`HTTP ${httpStatus}`);
     devMessage = parts.join(" | ") || undefined;
@@ -290,9 +292,7 @@ const classifyError = (err: unknown): LocalError => {
     devMessage = err;
   }
 
-  if (__DEV__) {
-    console.error(`[pay-merchant] code=${code}`, err);
-  }
+  console.error(`[pay-merchant] code=${code}`, err);
 
   return { code, devMessage };
 };

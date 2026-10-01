@@ -1,3 +1,5 @@
+import { redactEndpoints } from "../../errors/leakGuard";
+
 export class ProviderRpcError extends Error {
   code: number;
   data?: unknown;
@@ -23,7 +25,7 @@ export const PROVIDER_ERRORS = {
   invalidParams: (detail: string) =>
     new ProviderRpcError(-32602, `Invalid params: ${detail}`),
   internalError: (detail: string) =>
-    new ProviderRpcError(-32603, `Internal error: ${detail}`),
+    new ProviderRpcError(-32603, `Internal error: ${redactEndpoints(detail)}`),
 
   // ── EIP-5792 ────────────────────────────────────────────────────────
   //
@@ -73,5 +75,5 @@ export function toRpcErrorPayload(e: unknown): {
     return { code: e.code, message: e.message, data: e.data };
   }
   const msg = e instanceof Error ? e.message : String(e);
-  return { code: -32603, message: msg };
+  return { code: -32603, message: redactEndpoints(msg) };
 }

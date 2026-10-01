@@ -172,7 +172,9 @@ export default function AddContactModal({
                 color: apiError.isDuplicate ? "#c71c4b" : "#20222c99",
               }}
             >
-              {apiError.message}
+              {
+                apiError.message /* safe-error-ok: fixed copy from resolveApiError */
+              }
             </Text>
           </View>
         )}

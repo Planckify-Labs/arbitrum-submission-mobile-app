@@ -29,6 +29,7 @@
 import { track } from "@/services/analytics/posthog";
 import type { ToolCounterparty } from "../agent-executors/counterparty.ts";
 import { confirmedCounterpartyStore } from "../confirmedCounterpartyStore.ts";
+import { scrubToolFailure } from "../errors/leakGuard.ts";
 import { pendingTxStore } from "../pendingTxStore.ts";
 import type { ConnectedWallet } from "../resolveUxTreatment.ts";
 import type { AgentSession } from "./agentSession.ts";
@@ -332,6 +333,10 @@ async function runNonInteractive(
   } finally {
     clearTimeout(hintTimer);
   }
+
+  // Central backstop: no executor may put an endpoint / library error text on
+  // `error` or `reason`, because both reach the LLM and the chat UI.
+  result = scrubToolFailure(result);
 
   // --- Task 15: optimistic pending-tx UI hook ----------------------
   // The ONLY call site that adds records to `pendingTxStore` from the

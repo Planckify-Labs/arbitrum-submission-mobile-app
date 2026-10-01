@@ -36,7 +36,9 @@ import { resolveChainClients } from "../chainRouter";
 import {
   ExecutorError,
   ExecutorErrorCode,
+  logExecutorDetail,
   type MobileToolExecutor,
+  mapUnknownError,
   requireAddress,
   requireString,
   requireTxHash,
@@ -611,11 +613,10 @@ async function scanChainTokens(
   try {
     chainTokens = await loadCachedTokensForChain(blockchain.id);
   } catch (err) {
+    logExecutorDetail("token list fetch failed", err);
     throw new ExecutorError(
       ExecutorErrorCode.NetworkError,
-      `failed to fetch token list for chain_id ${chainId}: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
+      "token_list_unavailable",
     );
   }
 
@@ -822,10 +823,7 @@ export const getWalletTokens: MobileToolExecutor = (input, context) =>
           namespace: "evm",
           chain_id: chainIds[i],
           chain_label: `Chain ${chainIds[i]}`,
-          error:
-            res.reason instanceof Error
-              ? res.reason.message
-              : String(res.reason),
+          error: mapUnknownError(res.reason),
         });
       }
     });
