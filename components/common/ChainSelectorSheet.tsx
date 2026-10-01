@@ -25,6 +25,7 @@ import {
   View,
 } from "react-native";
 import { BaseModal, ModalHeader } from "@/components/common/BaseModal";
+import { BrandSwitch } from "@/components/common/BrandSwitch";
 import SingleLoadingSekeleton from "@/components/common/SingleLoadingSekeleton";
 import type { ChainConfig } from "@/constants/configs/chainConfig";
 import { useTokens } from "@/hooks/queries/useTokens";
@@ -32,6 +33,7 @@ import { useAddWalletPrompt } from "@/hooks/useAddWalletPrompt";
 import { useBlockchainsWithStorage } from "@/hooks/useBlockchainsWithStorage";
 import { useWallet } from "@/hooks/useWallet";
 import { buildChainConfigFromBlockchain } from "@/hooks/useWallet.helpers";
+import { storage } from "@/lib/storage/mmkv";
 import type { Namespace } from "@/services/chains/types";
 import { walletKitRegistry } from "@/services/walletKit/registry";
 import { ownedNamespaces } from "@/services/walletPresence";
@@ -55,12 +57,19 @@ type ChainRowItem = {
   config: ChainConfig;
 };
 
+// Per-device preference, not per-wallet: it's about what the user wants to
+// see in this list, and most users never need testnets at all.
+const SHOW_TESTNETS_KEY = "chainSelector:showTestnets";
+
 function capitalize(ns: string): string {
   return ns.charAt(0).toUpperCase() + ns.slice(1);
 }
 
 function sectionTitleForNamespace(ns: Namespace): string {
-  if (ns === "eip155") return "Ethereum";
+  // "EVM", not the kit's `displayName` ("Ethereum"): this group holds
+  // Arbitrum, Base, BSC, Arc and friends, and labelling it "Ethereum" read
+  // as if those were Ethereum itself.
+  if (ns === "eip155") return "EVM";
   try {
     const kit = walletKitRegistry.get(ns);
     return kit.displayName ?? capitalize(ns);
@@ -121,6 +130,13 @@ function ChainSelectorSheetBase({ visible, onClose }: ChainSelectorSheetProps) {
     useWallet();
   const [searchQuery, setSearchQuery] = useState("");
   const [switchingRowKey, setSwitchingRowKey] = useState<string | null>(null);
+  const [showTestnets, setShowTestnets] = useState<boolean>(
+    () => storage.getBoolean(SHOW_TESTNETS_KEY) ?? false,
+  );
+  const handleToggleTestnets = useCallback((value: boolean) => {
+    setShowTestnets(value);
+    storage.set(SHOW_TESTNETS_KEY, value);
+  }, []);
   const { promptFor, sheet: addWalletSheet } = useAddWalletPrompt();
 
   // Which namespaces the device can actually act on. Scoped to every
@@ -239,36 +255,6 @@ function ChainSelectorSheetBase({ visible, onClose }: ChainSelectorSheetProps) {
     return final;
   }, [blockchains, nativeTokens]);
 
-  /**
-   * Chains the user can actually switch to. Selecting a namespace with no
-   * wallet behind it used to move `activeChain` while `activeWallet`
-   * stayed put — `pickWalletForChain` returns null and the caller leaves
-   * state as-is — which left the app wedged: Send spun on "Switching
-   * network…" forever and balances rendered "—" until the user guessed
-   * that switching back was the fix.
-   */
-  /**
-   * Every chain the backend serves, reachable or not. Unreachable ones are
-   * NOT filtered out — `renderChainItem` dims them and swaps the tap for a
-   * "get a wallet" prompt. Hiding them made a chain the user knows exists
-   * look unsupported, and moving them to a separate bucket pushed real
-   * networks off screen as the namespace count grew.
-   */
-  const filteredGrouped = useMemo<Map<Namespace, ChainRowItem[]>>(() => {
-    const q = searchQuery.trim().toLowerCase();
-    if (q.length === 0) return grouped;
-    const out = new Map<Namespace, ChainRowItem[]>();
-    for (const [ns, rows] of grouped) {
-      const hits = rows.filter(
-        (r) =>
-          r.label.toLowerCase().includes(q) ||
-          r.symbol.toLowerCase().includes(q),
-      );
-      if (hits.length > 0) out.set(ns, hits);
-    }
-    return out;
-  }, [grouped, searchQuery]);
-
   const handleChainSelect = useCallback(
     async (row: ChainRowItem) => {
       setSwitchingRowKey(row.key);
@@ -320,6 +306,52 @@ function ChainSelectorSheetBase({ visible, onClose }: ChainSelectorSheetProps) {
     },
     [activeChain],
   );
+
+  /**
+   * Chains the user can actually switch to. Selecting a namespace with no
+   * wallet behind it used to move `activeChain` while `activeWallet`
+   * stayed put — `pickWalletForChain` returns null and the caller leaves
+   * state as-is — which left the app wedged: Send spun on "Switching
+   * network…" forever and balances rendered "—" until the user guessed
+   * that switching back was the fix.
+   */
+  /**
+   * Every chain the backend serves, reachable or not. Unreachable ones are
+   * NOT filtered out — `renderChainItem` dims them and swaps the tap for a
+   * "get a wallet" prompt. Hiding them made a chain the user knows exists
+   * look unsupported, and moving them to a separate bucket pushed real
+   * networks off screen as the namespace count grew.
+   */
+  const { filteredGrouped, hiddenTestnetMatches } = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    const out = new Map<Namespace, ChainRowItem[]>();
+    let hidden = 0;
+    for (const [ns, rows] of grouped) {
+      const hits: ChainRowItem[] = [];
+      for (const r of rows) {
+        const matches =
+          q.length === 0 ||
+          r.label.toLowerCase().includes(q) ||
+          r.symbol.toLowerCase().includes(q);
+        if (!matches) continue;
+        // Testnets are hidden unless opted in, but the active chain always
+        // stays listed: a user sitting on a testnet must still see where
+        // they are and the check mark on it.
+        if (r.isTestnet && !showTestnets && !isRowActive(r)) {
+          hidden++;
+          continue;
+        }
+        hits.push(r);
+      }
+      if (hits.length > 0) out.set(ns, hits);
+    }
+    // Only worth surfacing while searching: someone typing "sepolia" wants
+    // it found, not a silent "no match" because of a toggle they forgot.
+    return {
+      filteredGrouped: out,
+      hiddenTestnetMatches: q.length > 0 ? hidden : 0,
+    };
+  }, [grouped, searchQuery, showTestnets, isRowActive]);
 
   const renderChainItem = useCallback(
     (row: ChainRowItem) => {
@@ -446,6 +478,17 @@ function ChainSelectorSheetBase({ visible, onClose }: ChainSelectorSheetProps) {
           )}
         </View>
 
+        <View className="flex-row items-center justify-between mb-2">
+          <Text className="text-light-matte-black/70 text-sm font-medium">
+            Show testnets
+          </Text>
+          <BrandSwitch
+            value={showTestnets}
+            onValueChange={handleToggleTestnets}
+            accessibilityLabel="Show testnets"
+          />
+        </View>
+
         <ScrollView
           className="flex-1"
           keyboardShouldPersistTaps="handled"
@@ -456,8 +499,10 @@ function ChainSelectorSheetBase({ visible, onClose }: ChainSelectorSheetProps) {
             <ChainListSkeleton />
           ) : filteredGrouped.size === 0 ? (
             <View className="items-center justify-center py-8">
-              <Text className="text-light-matte-black/60 text-sm">
-                No networks match &quot;{searchQuery}&quot;
+              <Text className="text-light-matte-black/60 text-sm text-center">
+                {searchQuery.trim().length > 0
+                  ? `No networks match "${searchQuery}"`
+                  : "No networks available"}
               </Text>
             </View>
           ) : (
@@ -469,6 +514,23 @@ function ChainSelectorSheetBase({ visible, onClose }: ChainSelectorSheetProps) {
                 {rows.map(renderChainItem)}
               </View>
             ))
+          )}
+
+          {!isLoading && hiddenTestnetMatches > 0 && (
+            <Pressable
+              onPress={() => handleToggleTestnets(true)}
+              className="items-center py-3"
+              accessibilityRole="button"
+            >
+              <Text className="text-light-matte-black/60 text-xs text-center">
+                {hiddenTestnetMatches === 1
+                  ? "1 testnet matches."
+                  : `${hiddenTestnetMatches} testnets match.`}{" "}
+                <Text className="text-light-primary-red font-bold">
+                  Show testnets
+                </Text>
+              </Text>
+            </Pressable>
           )}
         </ScrollView>
       </BaseModal>
