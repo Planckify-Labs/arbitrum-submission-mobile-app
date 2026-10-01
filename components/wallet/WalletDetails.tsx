@@ -312,8 +312,13 @@ export default function WalletDetails({
         {/* Backup sits right by the seed phrase — same recovery concern. Only
             for wallets that actually have a mnemonic to encrypt.
             `seedGroupId` is the non-secret presence signal: it is assigned
-            only to mnemonic-derived rows (TWV-2026-057 Tier 1). */}
-        {wallet.seedGroupId && onBackup ? (
+            only to mnemonic-derived rows (TWV-2026-057 Tier 1). A passkey
+            login's account is already backed up: the passkey syncs with the
+            phone's password manager and re-derives the same phrase. Checked
+            on the whole account so a chain added later is covered too. */}
+        {wallet.seedGroupId &&
+        !pairedWallets.some((w) => w.passkey) &&
+        onBackup ? (
           <TouchableOpacity
             activeOpacity={0.7}
             onPress={onBackup}

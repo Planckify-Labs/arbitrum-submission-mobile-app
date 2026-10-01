@@ -130,6 +130,13 @@ export default function Login() {
       ),
   });
   const anyBusy = creating || google.isStarting || passkey.busy !== null;
+  // A phone that can't run the ceremony (no platform passkeys, or a
+  // binary without the native module) would only ever get an error
+  // dialog from the button, so it isn't offered. Passkey-only builds keep
+  // it regardless: it is the only way in, and its error says why.
+  const showPasskey =
+    FEATURE_PASSKEY_ONBOARDING &&
+    (passkey.supported || FEATURE_PASSKEY_ONLY_ONBOARDING);
 
   const handleCreateWallet = useCallback(async () => {
     if (creating) return;
@@ -242,25 +249,31 @@ export default function Login() {
               </Text>
             </View>
 
-            {FEATURE_PASSKEY_ONBOARDING ? (
-              <View className="bg-light rounded-3xl p-6 shadow-md- mb-4">
-                <Text className="text-light-matte-black/80 font-medium mb-1">
-                  {FEATURE_PASSKEY_ONLY_ONBOARDING ? "GET STARTED" : "PASSKEY"}
-                </Text>
-                <Text className="text-light-matte-black/50 text-xs mb-4">
-                  Your phone keeps your account safe with your {biometric.noun}.
-                  Nothing to remember, nothing to write down.
-                </Text>
+            {/*
+              Hierarchy, top to bottom:
+                1. Passkey: the one filled button. No password, no seed
+                   phrase, works on any phone signed in to the same
+                   password manager.
+                2. Google: outlined, same card, equal standing as a
+                   "get started" path.
+                3. Other ways: quiet rows for people who want to hold a
+                   recovery phrase themselves (create, or bring one).
+              When the passkey path can't run on this phone it drops out
+              and Google is the card's only button.
+            */}
+            <View className="bg-light rounded-3xl p-6 shadow-md- mb-8">
+              <Text className="text-light-matte-black/80 font-medium mb-4">
+                GET STARTED
+              </Text>
 
-                {/*
-                  One button. The hook asserts against any TakumiPay
-                  passkey already on this device / Google account (pinned
-                  to the last one used here when known, else the OS
-                  picker) and only creates a new one when the OS reports
-                  there is none. The user never has to know which
-                  ceremony ran. Dev-only: long-press runs the GPM probes
-                  in services/walletKit/evm/mera/diagnose.ts.
-                */}
+              {showPasskey ? (
+                // One button. The hook asserts against any TakumiPay
+                // passkey already on this device / Google account (pinned
+                // to the last one used here when known, else the OS
+                // picker) and only creates a new one when the OS reports
+                // there is none. The user never has to know which
+                // ceremony ran. Dev-only: long-press runs the GPM probes
+                // in services/walletKit/evm/mera/diagnose.ts.
                 <TouchableOpacity
                   activeOpacity={0.7}
                   className="bg-light-primary-red py-4 px-5 rounded-xl flex-row items-center justify-between"
@@ -275,8 +288,10 @@ export default function Login() {
                       : undefined
                   }
                   disabled={anyBusy}
+                  accessibilityRole="button"
+                  accessibilityLabel={biometric.cta}
                 >
-                  <View className="flex-row items-center">
+                  <View className="flex-row items-center flex-1 mr-3">
                     <View className="w-11 h-11 bg-light/20 rounded-full items-center justify-center mr-3">
                       {passkey.busy ? (
                         <ActivityIndicator size="small" color="#ffffff" />
@@ -284,31 +299,27 @@ export default function Login() {
                         <Fingerprint color="#ffffff" size={20} />
                       )}
                     </View>
-                    <View>
+                    <View className="flex-1">
                       <Text className="text-light font-semibold">
                         {passkey.busy ? "Unlocking…" : biometric.cta}
                       </Text>
                       <Text className="text-light/70 text-xs">
-                        Same account on any phone you sign in to
+                        No password or seed phrase to keep
                       </Text>
                     </View>
                   </View>
                   <ChevronRight color="#ffffff" size={18} />
                 </TouchableOpacity>
-              </View>
-            ) : null}
+              ) : null}
 
-            {FEATURE_PASSKEY_ONLY_ONBOARDING ? null : (
-              <View className="bg-light rounded-3xl p-6 shadow-md- mb-4">
-                <Text className="text-light-matte-black/80 font-medium mb-4">
-                  GET STARTED
-                </Text>
-
+              {FEATURE_PASSKEY_ONLY_ONBOARDING ? null : (
                 <TouchableOpacity
                   activeOpacity={0.7}
-                  className="bg-light border border-light-matte-black/10 py-4 px-5 rounded-xl flex-row items-center justify-between mb-3"
+                  className={`bg-light border border-light-matte-black/10 py-4 px-5 rounded-xl flex-row items-center justify-between${showPasskey ? " mt-3" : ""}`}
                   onPress={google.start}
                   disabled={anyBusy}
+                  accessibilityRole="button"
+                  accessibilityLabel="Continue with Google"
                 >
                   <View className="flex-row items-center">
                     <View className="w-11 h-11 bg-light-primary-red/10 rounded-full items-center justify-center mr-3">
@@ -329,82 +340,58 @@ export default function Login() {
                   </View>
                   <ChevronRight color="#20222c" size={18} />
                 </TouchableOpacity>
+              )}
 
-                <TouchableOpacity
-                  activeOpacity={0.7}
-                  className="bg-light-primary-red py-4 px-5 rounded-xl flex-row items-center justify-between mb-3"
-                  onPress={handleCreateWallet}
-                  disabled={anyBusy}
-                >
-                  <View className="flex-row items-center">
-                    <View className="w-11 h-11 bg-light/20 rounded-full items-center justify-center mr-3">
-                      {creating ? (
-                        <ActivityIndicator size="small" color="#ffffff" />
-                      ) : (
-                        <Plus color="#ffffff" size={20} />
-                      )}
-                    </View>
-                    <Text className="text-light font-semibold">
-                      {creating ? "Creating wallet…" : "Create New Wallet"}
-                    </Text>
-                  </View>
-                  <ChevronRight color="#ffffff" size={18} />
-                </TouchableOpacity>
-              </View>
-            )}
+              {showPasskey ? (
+                <Text className="text-light-matte-black/50 text-xs text-center mt-4">
+                  Secured by your {biometric.noun}. Nothing to write down.
+                </Text>
+              ) : null}
+            </View>
 
             {FEATURE_PASSKEY_ONLY_ONBOARDING ? null : (
-              <View className="bg-light rounded-3xl p-6 shadow-md- mb-8">
-                <Text className="text-light-matte-black/80 font-medium mb-4">
-                  IMPORT EXISTING WALLET
+              <View className="mb-8">
+                <Text className="text-light-matte-black/60 text-xs font-medium uppercase tracking-wide px-2 mb-1">
+                  Other ways
+                </Text>
+                <Text className="text-light-matte-black/40 text-xs px-2 mb-3">
+                  For a recovery phrase you keep yourself
                 </Text>
 
-                <TouchableOpacity
-                  activeOpacity={0.7}
-                  className="bg-light border border-light-matte-black/10 py-4 px-5 rounded-xl flex-row items-center justify-between mb-3"
-                  onPress={() => {
-                    google.cancelSeedPhraseRecovery();
-                    setSeedSheetVisible(true);
-                  }}
-                  disabled={anyBusy}
-                >
-                  <View className="flex-row items-center">
-                    <View className="w-11 h-11 bg-light-primary-red/10 rounded-full items-center justify-center mr-3">
-                      <ShieldCheck color="#c71c4b" size={20} />
-                    </View>
-                    <View>
-                      <Text className="text-light-matte-black font-medium">
-                        Import Seed Phrase
-                      </Text>
-                      <Text className="text-light-matte-black/50 text-xs">
-                        12 or 24 words, derives every chain
-                      </Text>
-                    </View>
-                  </View>
-                  <ChevronRight color="#20222c" size={18} />
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  activeOpacity={0.7}
-                  className="bg-light border border-light-matte-black/10 py-4 px-5 rounded-xl flex-row items-center justify-between"
-                  onPress={() => setPkSheetVisible(true)}
-                  disabled={anyBusy}
-                >
-                  <View className="flex-row items-center">
-                    <View className="w-11 h-11 bg-light-primary-red/10 rounded-full items-center justify-center mr-3">
-                      <KeyRound color="#c71c4b" size={20} />
-                    </View>
-                    <View>
-                      <Text className="text-light-matte-black font-medium">
-                        Import Private Key
-                      </Text>
-                      <Text className="text-light-matte-black/50 text-xs">
-                        One chain: EVM or Solana
-                      </Text>
-                    </View>
-                  </View>
-                  <ChevronRight color="#20222c" size={18} />
-                </TouchableOpacity>
+                <View className="bg-light/60 rounded-2xl overflow-hidden">
+                  <OtherWayRow
+                    icon={
+                      creating ? (
+                        <ActivityIndicator size="small" color="#c71c4b" />
+                      ) : (
+                        <Plus color="#c71c4b" size={16} />
+                      )
+                    }
+                    title={creating ? "Creating wallet…" : "Create new wallet"}
+                    subtitle="New recovery phrase, every chain"
+                    onPress={handleCreateWallet}
+                    disabled={anyBusy}
+                  />
+                  <OtherWayRow
+                    icon={<ShieldCheck color="#c71c4b" size={16} />}
+                    title="Import seed phrase"
+                    subtitle="12 or 24 words, derives every chain"
+                    onPress={() => {
+                      google.cancelSeedPhraseRecovery();
+                      setSeedSheetVisible(true);
+                    }}
+                    disabled={anyBusy}
+                    divider
+                  />
+                  <OtherWayRow
+                    icon={<KeyRound color="#c71c4b" size={16} />}
+                    title="Import private key"
+                    subtitle="One chain: EVM or Solana"
+                    onPress={() => setPkSheetVisible(true)}
+                    disabled={anyBusy}
+                    divider
+                  />
+                </View>
               </View>
             )}
 
@@ -456,6 +443,49 @@ export default function Login() {
         />
       </SafeAreaView>
     </>
+  );
+}
+
+type TOtherWayRowProps = {
+  icon: React.ReactNode;
+  title: string;
+  subtitle: string;
+  onPress: () => void;
+  disabled: boolean;
+  /** Hairline above the row; every row but the first. */
+  divider?: boolean;
+};
+
+function OtherWayRow({
+  icon,
+  title,
+  subtitle,
+  onPress,
+  disabled,
+  divider,
+}: TOtherWayRowProps) {
+  return (
+    <TouchableOpacity
+      activeOpacity={0.7}
+      className={`flex-row items-center justify-between px-4 py-3.5${divider ? " border-t border-light-matte-black/5" : ""}`}
+      onPress={onPress}
+      disabled={disabled}
+      accessibilityRole="button"
+      accessibilityLabel={title}
+    >
+      <View className="flex-row items-center flex-1 mr-3">
+        <View className="w-9 h-9 bg-light-primary-red/10 rounded-full items-center justify-center mr-3">
+          {icon}
+        </View>
+        <View className="flex-1">
+          <Text className="text-light-matte-black font-medium text-sm">
+            {title}
+          </Text>
+          <Text className="text-light-matte-black/50 text-xs">{subtitle}</Text>
+        </View>
+      </View>
+      <ChevronRight color="#20222c" size={16} opacity={0.5} />
+    </TouchableOpacity>
   );
 }
 

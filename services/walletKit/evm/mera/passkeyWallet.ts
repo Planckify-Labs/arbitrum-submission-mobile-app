@@ -3,12 +3,12 @@
  *
  * The only module in the app that talks to WebAuthn. Two entry points:
  *
- *   - `createPasskeyWallet()` — one platform-passkey creation ceremony
+ *   - `createPasskeyCredential()` — one platform-passkey creation ceremony
  *     (Face ID / Touch ID / Android biometric) that also evaluates the
- *     PRF extension, then derives the EVM key from the output.
- *   - `signInWithPasskeyWallet()` — one assertion ceremony against any
+ *     PRF extension.
+ *   - `assertPasskeyCredential()` — one assertion ceremony against any
  *     discoverable TakumiPay passkey on the device; reproduces the same
- *     PRF output, therefore the same address. This is the "existing
+ *     PRF output, therefore the same wallets. This is the "existing
  *     user, new device" path and needs no server round-trip.
  *
  * Neither step makes a network call: Mera is purely on-device crypto
@@ -21,10 +21,11 @@
  * challenge / user-handle generation. Mera throws `CRYPTO_UNAVAILABLE`
  * otherwise, which `classifyPasskeyError` maps to a generic failure.
  *
- * The derived row is EVM-only and docks into the existing wallet
- * pipeline as `type: "Passkey"` — `walletService.getAccountForWallet`
- * signs it exactly like a private-key import, so send / agent / dApp
- * bridge / gasless all work unchanged (§3.5, §4.2).
+ * Both resolve to a `TPasskeyCeremony` (credential + mnemonic) and stop
+ * there: the PRF bytes are zeroed before returning, and the wallet set is
+ * derived by the caller via `derivePasskeyWallets` once its progress
+ * popup is up. The result is a normal seed account, so send / agent /
+ * dApp bridge / gasless all work unchanged.
  */
 
 import {
@@ -35,12 +36,11 @@ import {
 import { reactNativeWebAuthnClient } from "@category-labs/mera/react-native-webauthn-client";
 import { NativeModules, Platform } from "react-native";
 import { Passkey } from "react-native-passkey";
-import type { TWallet } from "@/constants/types/walletTypes";
 import {
-  DEFAULT_PASSKEY_WALLET_NAME,
-  derivePasskeyWallet,
   PASSKEY_RP_ID,
   PASSKEY_RP_NAME,
+  passkeyMnemonic,
+  type TPasskeyCeremony,
 } from "./derive";
 import type { KnownPasskeyCredential } from "./lastCredential";
 
@@ -98,22 +98,21 @@ function passkeyUserName(): string {
   return `TakumiPay ${stamp}`;
 }
 
-export async function createPasskeyWallet(name?: string): Promise<TWallet> {
+export async function createPasskeyCredential(): Promise<TPasskeyCeremony> {
   const created = await createPasskeyWithPrfOutput({
     rp: RP,
     user: { name: passkeyUserName(), displayName: PASSKEY_RP_NAME },
     webAuthnClient: reactNativeWebAuthnClient,
   });
   try {
-    return derivePasskeyWallet({
-      prfOutput: created.prfOutput,
+    return {
+      mnemonic: passkeyMnemonic(created.prfOutput),
       passkey: {
         credentialId: created.credentialId,
         rpId: PASSKEY_RP_ID,
         ...(created.transports ? { transports: [...created.transports] } : {}),
       },
-      name: name ?? DEFAULT_PASSKEY_WALLET_NAME,
-    });
+    };
   } finally {
     created.prfOutput.fill(0);
   }
@@ -152,24 +151,21 @@ const immediateWebAuthnClient: WebAuthnClient = {
   },
 };
 
-export async function signInWithPasskeyWallet(
-  name?: string,
-  options?: {
-    /**
-     * Fail fast with `NoCredentials` (no OS fallback UI) when this device
-     * has no passkey for TakumiPay. Used by the one-button login.
-     */
-    immediate?: boolean;
-    /**
-     * Pin the assertion to one known passkey so the OS skips its picker
-     * and goes straight to the biometric, even when other Google accounts
-     * on the phone also hold a TakumiPay passkey (Mera's "remember the
-     * credential" recipe). If that passkey is gone the OS reports
-     * `NoCredentials`; the caller falls back to a discoverable assertion.
-     */
-    credential?: KnownPasskeyCredential;
-  },
-): Promise<TWallet> {
+export async function assertPasskeyCredential(options?: {
+  /**
+   * Fail fast with `NoCredentials` (no OS fallback UI) when this device
+   * has no passkey for TakumiPay. Used by the one-button login.
+   */
+  immediate?: boolean;
+  /**
+   * Pin the assertion to one known passkey so the OS skips its picker
+   * and goes straight to the biometric, even when other Google accounts
+   * on the phone also hold a TakumiPay passkey (Mera's "remember the
+   * credential" recipe). If that passkey is gone the OS reports
+   * `NoCredentials`; the caller falls back to a discoverable assertion.
+   */
+  credential?: KnownPasskeyCredential;
+}): Promise<TPasskeyCeremony> {
   const asserted = await getPasskeyPrfOutput({
     rpId: PASSKEY_RP_ID,
     ...(options?.credential
@@ -187,11 +183,10 @@ export async function signInWithPasskeyWallet(
       : reactNativeWebAuthnClient,
   });
   try {
-    return derivePasskeyWallet({
-      prfOutput: asserted.prfOutput,
+    return {
+      mnemonic: passkeyMnemonic(asserted.prfOutput),
       passkey: { credentialId: asserted.credentialId, rpId: PASSKEY_RP_ID },
-      name: name ?? DEFAULT_PASSKEY_WALLET_NAME,
-    });
+    };
   } finally {
     asserted.prfOutput.fill(0);
   }

@@ -6,15 +6,7 @@ export type WalletType =
   | "SeedPhrase"
   | "Social"
   | "Smart4337"
-  | "Smart7702"
-  /**
-   * Mera passkey wallet (docs/monad-metropolis-2026-spec.md §3). An
-   * EVM-only EOA whose key is a deterministic function of a platform
-   * passkey's WebAuthn PRF output. The user never sees a seed phrase;
-   * the passkey itself is the recovery mechanism (same passkey on a new
-   * device reproduces the same key). Signs exactly like `PrivateKey`.
-   */
-  | "Passkey";
+  | "Smart7702";
 
 export interface TPasskeyFields {
   /** WebAuthn credential id, canonical unpadded base64url. */
@@ -113,7 +105,12 @@ export interface TWallet {
   };
   smart4337?: TSmart4337Fields;
   smart7702?: TSmart7702Fields;
-  /** Present iff `type === "Passkey"`. Non-secret credential metadata. */
+  /**
+   * Set on the rows of a Mera passkey-login account: provenance, like
+   * `socialAccount` for Google. The rows themselves are ordinary
+   * `SeedPhrase` rows derived from the passkey's PRF mnemonic
+   * (`services/walletKit/evm/mera/derive.ts`). Non-secret.
+   */
   passkey?: TPasskeyFields;
   solana?: TSolanaFields;
   sui?: TSuiFields;

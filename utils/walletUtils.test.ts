@@ -42,6 +42,7 @@ import {
   parseSolanaPrivateKey,
   SUI_LEGACY_ADDRESS_UX_MESSAGE,
   walletAvatarInitials,
+  walletTypeLabel,
 } from "@/utils/walletUtils";
 
 // Canonical Phantom-verified golden vector from
@@ -539,5 +540,21 @@ describe("walletAvatarInitials", () => {
 
   it("falls back to 'W' when nothing is usable", () => {
     assert.equal(walletAvatarInitials({ name: "" }), "W");
+  });
+});
+
+describe("walletTypeLabel", () => {
+  it("labels a passkey-login seed wallet by its login method", () => {
+    const passkey = { credentialId: "Y3JlZC1pZA", rpId: "takumipay.xyz" };
+    assert.equal(walletTypeLabel({ type: "SeedPhrase", passkey }), "Passkey");
+  });
+
+  it("labels a Google wallet by provider and a plain one by key type", () => {
+    const socialAccount = { provider: "google", email: "", name: "" };
+    assert.equal(
+      walletTypeLabel({ type: "SeedPhrase", socialAccount }),
+      "Google",
+    );
+    assert.equal(walletTypeLabel({ type: "SeedPhrase" }), "SeedPhrase");
   });
 });

@@ -38,16 +38,18 @@ import {
 import { InvalidSuiAddressLegacyError } from "@/services/chains/sui/errorCodes";
 
 /**
- * Chip label for a wallet's provenance. A wallet tied to a social login
- * (currently only Google) shows the provider name; every other wallet shows its
- * key type ("SeedPhrase" / "PrivateKey"). Keyed off `socialAccount` rather than
- * `type` so these wallets keep `type: "SeedPhrase"` and their seed-reveal UI.
+ * Chip label for a wallet's provenance. A wallet tied to a login method
+ * (Google via `socialAccount`, a Mera passkey via `passkey`) shows that method;
+ * every other wallet shows its key type ("SeedPhrase" / "PrivateKey"). Keyed
+ * off the provenance fields rather than `type` so these wallets keep
+ * `type: "SeedPhrase"` and their seed-reveal UI.
  */
 export function walletTypeLabel(
-  wallet: Pick<TWallet, "type" | "socialAccount">,
+  wallet: Pick<TWallet, "type" | "socialAccount" | "passkey">,
 ): string {
   const provider = wallet.socialAccount?.provider;
   if (provider) return provider.charAt(0).toUpperCase() + provider.slice(1);
+  if (wallet.passkey) return "Passkey";
   return wallet.type;
 }
 

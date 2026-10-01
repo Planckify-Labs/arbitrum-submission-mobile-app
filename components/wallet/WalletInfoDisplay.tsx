@@ -1,12 +1,4 @@
-import {
-  Copy,
-  Eye,
-  EyeOff,
-  Fingerprint,
-  Key,
-  Mail,
-  User,
-} from "lucide-react-native";
+import { Copy, Eye, EyeOff, Key, Mail, User } from "lucide-react-native";
 import React, { memo } from "react";
 import { Pressable, Text, View } from "react-native";
 import { TWallet } from "@/constants/types/walletTypes";
@@ -166,37 +158,6 @@ export default memo(function WalletInfoDisplay({
               icon={<User size={14} color="#c71c4b" />}
               label="Name"
               value={wallet.socialAccount?.name || "Not available"}
-            />
-          </View>
-        </View>
-      );
-
-    case "Passkey":
-      // Mera passkey wallet (docs/monad-metropolis-2026-spec.md §3). There
-      // is deliberately no secret to reveal here: the passkey itself is
-      // the recovery mechanism, and showing a private key would undo the
-      // "no seed phrase" account layer this wallet type exists for.
-      // `mb-4`: the mnemonic cases get their spacing from the Drive backup
-      // row that follows them; a passkey wallet has none, so the gap to
-      // whatever comes next (the upgrade card) lives here.
-      return (
-        <View className="mb-4">
-          <View className="flex-row items-center mb-2">
-            <Fingerprint size={12} color="#c71c4b" />
-            <Text className="text-light-matte-black/50 text-xs font-medium ml-1 uppercase tracking-wide">
-              Passkey
-            </Text>
-          </View>
-          <View className="bg-light-main-container/50 rounded-2xl overflow-hidden">
-            <InfoRow
-              icon={<Fingerprint size={14} color="#c71c4b" />}
-              label="Secured by"
-              value="Face ID, Touch ID or screen lock"
-            />
-            <InfoRow
-              icon={<Key size={14} color="#c71c4b" />}
-              label="Recovery"
-              value="Syncs with your password manager"
             />
           </View>
         </View>

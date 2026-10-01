@@ -2,9 +2,9 @@
  * Mera passkey onboarding flow (docs/monad-metropolis-2026-spec.md §3.5).
  *
  * The screen-independent half of "Continue with passkey": run the
- * ceremony, land the derived `Passkey` wallet in the bundle (or
- * re-select it if this device already holds it), point the app at Monad,
- * and complete the wallet-bound session handshake silently. The host
+ * ceremony, land the derived passkey account (one row per chain) in
+ * the bundle (or re-select it if this device already holds it), and
+ * complete the wallet-bound session handshake silently. The host
  * supplies only presentation (`onStep`/`onStart`/`onStop`), navigation
  * (`onComplete`) and error surfacing (`onError`) — same split as
  * `useGoogleWalletAuth`, so the login screen and a future in-app sheet
@@ -19,10 +19,12 @@
  */
 
 import { useCallback, useState } from "react";
+import { AppState } from "react-native";
 import type { TWallet } from "@/constants/types/walletTypes";
 import { useWallet } from "@/hooks/useWallet";
 import { track } from "@/services/analytics/posthog";
 import { authenticateWallet } from "@/services/auth/authenticateWallet";
+import { addressesEqual } from "@/services/walletKit/chainInfo";
 import {
   classifyPasskeyError,
   isNoPasskeyError,
@@ -36,9 +38,13 @@ import {
   writeLastPasskeyCredential,
 } from "@/services/walletKit/evm/mera/lastCredential";
 import {
-  createPasskeyWallet,
+  derivePasskeyWallets,
+  type TPasskeyCeremony,
+} from "@/services/walletKit/evm/mera/derive";
+import {
+  assertPasskeyCredential,
+  createPasskeyCredential,
   isPasskeySupported,
-  signInWithPasskeyWallet,
   supportsSilentPasskeyProbe,
 } from "@/services/walletKit/evm/mera/passkeyWallet";
 
@@ -66,6 +72,23 @@ export type PasskeyOnboardingOptions = {
    */
   onConfirmFirstTime?: () => Promise<boolean>;
 };
+
+/** Resolves once the app is in the foreground (immediately if it is). */
+function untilAppActive(timeoutMs = 2000): Promise<void> {
+  if (AppState.currentState === "active") return Promise.resolve();
+  return new Promise((resolve) => {
+    const done = () => {
+      sub.remove();
+      clearTimeout(timer);
+      resolve();
+    };
+    const sub = AppState.addEventListener("change", (next) => {
+      if (next === "active") done();
+    });
+    // Never strand the flow if the event is missed.
+    const timer = setTimeout(done, timeoutMs);
+  });
+}
 
 export function usePasskeyOnboarding({
   onStep,
@@ -95,10 +118,12 @@ export function usePasskeyOnboarding({
         return;
       }
       setBusy(path);
-      let wallet: TWallet;
+      let ceremony: TPasskeyCeremony;
       try {
         // The ceremony runs BEFORE the progress overlay: the OS passkey
         // sheet is the UI here, and a spinner behind it reads as a hang.
+        // It only yields the credential + mnemonic; the wallet set is
+        // derived below, once the overlay is up.
         //
         // "continue" is the one-button path: assert against any TakumiPay
         // passkey already on this device / account (same passkey, same
@@ -107,9 +132,9 @@ export function usePasskeyOnboarding({
         // create a second passkey behind the user's back, since a new
         // credential is a new PRF secret and therefore a new wallet.
         if (path === "create") {
-          wallet = await createPasskeyWallet();
+          ceremony = await createPasskeyCredential();
         } else if (path === "sign_in") {
-          wallet = await signInWithPasskeyWallet();
+          ceremony = await assertPasskeyCredential();
         } else {
           // 1. Pinned: the passkey this device used last (a wallet row still
           //    here, else the MMKV hint that survives a wipe). The OS skips
@@ -119,9 +144,9 @@ export function usePasskeyOnboarding({
           //    or the pinned one was deleted) — the OS shows its picker.
           // 3. Create: only when the OS reports there is none at all.
           const known: KnownPasskeyCredential | null =
-            wallets.find((w) => w.type === "Passkey" && w.passkey)?.passkey ??
+            wallets.find((w) => w.passkey)?.passkey ??
             readLastPasskeyCredential();
-          const attempts: Array<[string, () => Promise<TWallet>]> = [
+          const attempts: Array<[string, () => Promise<TPasskeyCeremony>]> = [
             ...(known
               ? [
                   [
@@ -131,19 +156,16 @@ export function usePasskeyOnboarding({
                     // the OS goes straight to the biometric for that one
                     // passkey. Only the discoverable step below relies on
                     // `preferImmediatelyAvailableCredentials`.
-                    () =>
-                      signInWithPasskeyWallet(undefined, {
-                        credential: known,
-                      }),
-                  ] as [string, () => Promise<TWallet>],
+                    () => assertPasskeyCredential({ credential: known }),
+                  ] as [string, () => Promise<TPasskeyCeremony>],
                 ]
               : []),
             [
               "discoverable",
-              () => signInWithPasskeyWallet(undefined, { immediate: true }),
+              () => assertPasskeyCredential({ immediate: true }),
             ],
           ];
-          let asserted: TWallet | null = null;
+          let asserted: TPasskeyCeremony | null = null;
           for (const [label, attempt] of attempts) {
             try {
               if (__DEV__) console.info(`[passkey] assert (${label})`);
@@ -175,16 +197,16 @@ export function usePasskeyOnboarding({
             }
           }
           if (asserted) {
-            wallet = asserted;
+            ceremony = asserted;
             path = "sign_in";
           } else {
             if (__DEV__)
               console.info("[passkey] no passkey on device, creating one");
-            wallet = await createPasskeyWallet();
+            ceremony = await createPasskeyCredential();
             path = "create";
           }
         }
-        if (wallet.passkey) writeLastPasskeyCredential(wallet.passkey);
+        writeLastPasskeyCredential(ceremony.passkey);
       } catch (err) {
         const copy = classifyPasskeyError(err);
         if (__DEV__) {
@@ -211,26 +233,56 @@ export function usePasskeyOnboarding({
       }
 
       try {
+        // Same sequence as "Create New Wallet" (`app/login.tsx`): put the
+        // overlay up and let it paint BEFORE the JS-thread-heavy
+        // derivation, or the screen just freezes after the biometric.
+        // The OS passkey sheet is its own activity: when the ceremony
+        // resolves the app is often still `background` (measured on
+        // device). Start the overlay only once it is drawing again, or the
+        // 200 ms below elapses off-screen and derivation blocks the JS
+        // thread before the spinner's native animation is ever started.
+        await untilAppActive();
         onStart?.();
         step(0);
         await wait(200);
 
-        // Same passkey on a device that already derived this wallet
-        // (e.g. sign-in after a create): re-select, don't duplicate.
-        const existingIdx = wallets.findIndex(
-          (w) => w.address.toLowerCase() === wallet.address.toLowerCase(),
-        );
-        const existing = existingIdx >= 0;
         step(1);
-        if (existing) {
-          setActiveWallet(existingIdx);
-        } else {
-          const saved = await addWallets([wallet]);
+        // Derivation holds the JS thread; yield once more so this step's
+        // text is committed before it starts, or the popup stays on step 0.
+        await wait(100);
+        const account = await derivePasskeyWallets(ceremony);
+        // EVM first (`derivePasskeyWallets`): the row the session
+        // handshake signs with, same as the Google path's primary.
+        const primary = account[0];
+        // Same passkey on a device that already derived this account
+        // (e.g. sign-in after a create): re-select, don't duplicate.
+        // `addWallets` skips rows already present, so a device holding
+        // only some of the chains gets the rest.
+        const isHeld = (w: TWallet) =>
+          wallets.some((h) =>
+            addressesEqual(w.namespace, h.address, w.address),
+          );
+        const existing = account.some(isHeld);
+
+        // Session handshake BEFORE saving: a fresh row still carries its
+        // mnemonic, so it can sign without being in the bundle. Saving is
+        // what makes the app lock (wallets now exist, not unlocked this
+        // session), so it goes last and navigation follows it within the
+        // same ~300 ms as "Create New Wallet". Otherwise the LockScreen
+        // lands on the login screen during this network round trip.
+        step(2);
+        await authenticateWallet(primary, activeChain);
+
+        if (!account.every(isHeld)) {
+          const saved = await addWallets(account);
           if (!saved) throw new Error("passkey wallet was not persisted");
         }
-
-        step(2);
-        await authenticateWallet(wallet, activeChain);
+        // Re-select the held EVM row; a fresh one was already selected by
+        // `addWallets`.
+        const heldPrimary = wallets.findIndex((w) =>
+          addressesEqual(primary.namespace, w.address, primary.address),
+        );
+        if (heldPrimary >= 0) setActiveWallet(heldPrimary);
 
         step(3);
         track("passkey_onboarding_completed", { path, existing });

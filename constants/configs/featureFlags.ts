@@ -140,8 +140,11 @@ export const FEATURE_EVM_ONCHAIN_SETTLEMENT_MAINNET = flag(
  * Mera passkey onboarding (docs/monad-metropolis-2026-spec.md §3.5).
  *
  * Two levels:
- *   - `FEATURE_PASSKEY_ONBOARDING` shows "Continue with passkey" on the
- *     login screen next to the existing options.
+ *   - `FEATURE_PASSKEY_ONBOARDING` makes "Continue with <biometric>" the
+ *     primary login button, above Google, with create / import moved to
+ *     the "Other ways" rows (`app/login.tsx`). A passkey account gets
+ *     every chain, like a seed-phrase account
+ *     (`services/walletKit/evm/mera/derive.ts`).
  *   - `FEATURE_PASSKEY_ONLY_ONBOARDING` additionally HIDES the
  *     Google / seed-phrase / private-key paths so the passkey is the
  *     entire account layer for the judged build (Mera bounty framing,
@@ -149,13 +152,10 @@ export const FEATURE_EVM_ONCHAIN_SETTLEMENT_MAINNET = flag(
  *     drives the Monad-only chain lockdown (`services/walletKit/chainSupport.ts`)
  *     for the hackathon build.
  *
- * Default OFF on `main`: the passkey login and the Monad-only lockdown
- * were built and judged on the `monad-hackathon` branch, but Mera is
- * pre-1.0 and Android PRF coverage is unverified, so the Play Store
- * build stays on the normal multi-chain / Google / seed-phrase / private-key
- * login until the passkey path gets more testing. The code is intact;
- * set `EXPO_PUBLIC_FF_PASSKEY_ONLY_ONBOARDING=true` locally to bring it
- * back for testing.
+ * Passkey login is ON by default; passkey-only and the Monad lockdown
+ * stay OFF on `main`. Kill switch: build with
+ * `EXPO_PUBLIC_FF_PASSKEY_ONBOARDING=false` (inlined at bundle time, so
+ * it needs a new build or OTA update, not a restart).
  */
 export const FEATURE_PASSKEY_ONLY_ONBOARDING = flag(
   "EXPO_PUBLIC_FF_PASSKEY_ONLY_ONBOARDING",
@@ -163,4 +163,4 @@ export const FEATURE_PASSKEY_ONLY_ONBOARDING = flag(
 );
 export const FEATURE_PASSKEY_ONBOARDING =
   FEATURE_PASSKEY_ONLY_ONBOARDING ||
-  flag("EXPO_PUBLIC_FF_PASSKEY_ONBOARDING", false);
+  flag("EXPO_PUBLIC_FF_PASSKEY_ONBOARDING", true);

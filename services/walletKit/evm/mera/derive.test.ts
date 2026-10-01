@@ -1,66 +1,94 @@
 /**
  * Mera passkey derivation (docs/monad-metropolis-2026-spec.md §3.2).
  *
- * Pins the two properties the "no seed phrase" claim rests on:
- *   - determinism: the same PRF output always yields the same address,
- *   - the row shape: EVM-only, `type: "Passkey"`, private key only —
- *     never a `seedPhrase` (which would trigger the multi-chain
- *     backfill in `useWallet`).
+ * Pins the properties the "no seed phrase" claim and the multi-chain
+ * passkey account rest on:
+ *   - determinism: the same PRF output always yields the same addresses,
+ *   - the EVM address is `mnemonicToAccount` at m/44'/60'/0'/0/0 of the
+ *     PRF mnemonic,
+ *   - the row shape: one ordinary `SeedPhrase` row per registered
+ *     chain, EVM first, tagged with the credential like Google tags
+ *     `socialAccount` (no passkey-specific type for shared code to
+ *     branch on).
  */
 
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { before, describe, it } from "node:test";
 import { MeraError } from "@category-labs/mera";
-import { privateKeyToAccount } from "viem/accounts";
-import { derivePasskeyWallet, PASSKEY_RP_ID } from "./derive.ts";
+import { mnemonicToAccount } from "viem/accounts";
+import { __resetWalletKitBootForTests, bootWalletKits } from "../../boot.ts";
+import { walletKitRegistry } from "../../registry.ts";
+import {
+  derivePasskeyWallets,
+  PASSKEY_RP_ID,
+  passkeyMnemonic,
+} from "./derive.ts";
 import { classifyPasskeyError } from "./errors.ts";
 
 const PRF = new Uint8Array(32).map((_, i) => (i * 7 + 3) & 0xff);
 const PASSKEY = { credentialId: "Y3JlZC1pZA", rpId: PASSKEY_RP_ID };
 
-describe("derivePasskeyWallet", () => {
-  it("is deterministic for the same PRF output", () => {
-    const a = derivePasskeyWallet({ prfOutput: PRF, passkey: PASSKEY });
-    const b = derivePasskeyWallet({
-      prfOutput: new Uint8Array(PRF),
-      passkey: PASSKEY,
-    });
-    assert.equal(a.address, b.address);
-    assert.equal(a.privateKey, b.privateKey);
+describe("derivePasskeyWallets", () => {
+  before(() => {
+    walletKitRegistry.clear();
+    __resetWalletKitBootForTests();
+    bootWalletKits();
   });
 
-  it("produces an EVM-only Passkey row with a private key and no seed", () => {
-    const w = derivePasskeyWallet({
-      prfOutput: PRF,
-      passkey: PASSKEY,
+  // What a ceremony hands back for a given PRF output.
+  const ceremonyFor = (prf: Uint8Array) => ({
+    mnemonic: passkeyMnemonic(prf),
+    passkey: PASSKEY,
+  });
+
+  it("is deterministic for the same PRF output", async () => {
+    const a = await derivePasskeyWallets(ceremonyFor(PRF));
+    const b = await derivePasskeyWallets(ceremonyFor(new Uint8Array(PRF)));
+    assert.deepEqual(
+      a.map((w) => w.address),
+      b.map((w) => w.address),
+    );
+  });
+
+  it("derives the EVM address from the PRF mnemonic", async () => {
+    const [evm] = await derivePasskeyWallets(ceremonyFor(PRF));
+    assert.equal(evm.namespace, "eip155");
+    assert.equal(evm.address, mnemonicToAccount(passkeyMnemonic(PRF)).address);
+  });
+
+  it("produces one tagged seed row per registered chain", async () => {
+    const rows = await derivePasskeyWallets({
+      ...ceremonyFor(PRF),
       name: "Demo",
     });
-    assert.equal(w.type, "Passkey");
-    assert.equal(w.namespace, "eip155");
-    assert.equal(w.name, "Demo");
-    assert.equal(w.seedPhrase, undefined);
-    assert.match(w.privateKey ?? "", /^0x[0-9a-f]{64}$/);
-    assert.deepEqual(w.passkey, PASSKEY);
-    // The row's address must be the one the stored key signs for —
-    // that is the contract `getAccountForWallet` relies on.
-    assert.equal(
-      privateKeyToAccount(w.privateKey as `0x${string}`).address,
-      w.address,
+    assert.deepEqual(
+      rows.map((w) => w.namespace),
+      walletKitRegistry.getAll().map((k) => k.namespace),
     );
+    for (const w of rows) {
+      assert.equal(w.type, "SeedPhrase");
+      assert.deepEqual(w.passkey, PASSKEY);
+      assert.match(w.name, /^Demo · /);
+      // Shared mnemonic: what groups the rows into one account and lets
+      // the backfill mint a future chain from the same passkey.
+      assert.equal(w.seedPhrase, passkeyMnemonic(PRF));
+    }
   });
 
-  it("changes address when the PRF output changes", () => {
+  it("changes addresses when the PRF output changes", async () => {
     const other = new Uint8Array(PRF);
     other[0] ^= 1;
-    const a = derivePasskeyWallet({ prfOutput: PRF, passkey: PASSKEY });
-    const b = derivePasskeyWallet({ prfOutput: other, passkey: PASSKEY });
-    assert.notEqual(a.address, b.address);
+    const a = await derivePasskeyWallets(ceremonyFor(PRF));
+    const b = await derivePasskeyWallets(ceremonyFor(other));
+    for (let i = 0; i < a.length; i++) {
+      assert.notEqual(a[i].address, b[i].address);
+    }
   });
+});
 
+describe("passkeyMnemonic", () => {
   it("rejects a PRF output that is not 32 bytes", () => {
-    assert.throws(() =>
-      derivePasskeyWallet({ prfOutput: new Uint8Array(31), passkey: PASSKEY }),
-    );
+    assert.throws(() => passkeyMnemonic(new Uint8Array(31)));
   });
 });
 
