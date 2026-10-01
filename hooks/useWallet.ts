@@ -17,6 +17,7 @@ import type {
 } from "@/constants/types/walletTypes";
 import { useAgentBusy } from "@/hooks/useAgentBusy";
 import { storage } from "@/lib/storage/mmkv";
+import { pickOnboardingDefaultChainId } from "@/services/blockchains/defaultChain";
 import type { Namespace } from "@/services/chains/types";
 import { formatChainLabel } from "@/services/walletKit/chainInfo";
 import {
@@ -924,6 +925,40 @@ export function useWallet() {
     setActiveWalletInternal,
     changeActiveChainInternal,
   ]);
+
+  // First-time onboarding default: a brand-new install lands on Arc
+  // mainnet instead of the static `supportedChains[0]` (Ethereum). The
+  // outcome is persisted (`default_chain_state`) so it runs once per
+  // install and never overrides a chain the user picked themselves.
+  //   - Existing installs (wallets already present on the first run, or
+  //     a stored `active_chain`) are marked done untouched, so nobody is
+  //     silently moved off the chain they have been using.
+  //   - The chain list is API-driven: Arc mainnet is looked up in the
+  //     `/blockchains` feed, and if the feed doesn't serve it the first
+  //     selectable chain on that list is used instead.
+  // Skipped under the chain lockdown build, which pins its own default.
+  useEffect(() => {
+    if (CHAIN_LOCKDOWN_ACTIVE || isLoading) return;
+    const state = storage.getString("default_chain_state");
+    if (state === "done") return;
+    if (storage.getString("active_chain")) {
+      storage.set("default_chain_state", "done");
+      return;
+    }
+    if (state !== "pending") {
+      if (wallets.length > 0) {
+        storage.set("default_chain_state", "done");
+        return;
+      }
+      storage.set("default_chain_state", "pending");
+    }
+    if (!blockchains?.length) return;
+    const target = pickOnboardingDefaultChainId(blockchains);
+    if (target == null) return;
+    void changeActiveChainInternal(target).then((ok) => {
+      if (ok) storage.set("default_chain_state", "done");
+    });
+  }, [isLoading, wallets.length, blockchains, changeActiveChainInternal]);
 
   const backfillOnceRef = useRef(false);
   useEffect(() => {
