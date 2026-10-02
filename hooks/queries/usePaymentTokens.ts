@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { publicApi } from "@/constants/configs/ky";
+import { filterSupportedTokens } from "@/services/tokens/tokenSupport";
 
 export interface PaymentToken {
   id: string;
@@ -18,6 +19,11 @@ export interface PaymentToken {
 
 interface UsePaymentTokensOptions {
   blockchainId?: string;
+  /**
+   * Skip the stablecoin lockdown. For read-only lookups of a payment that
+   * already happened (receipts), never for pickers.
+   */
+  includeUnsupported?: boolean;
 }
 
 async function fetchPaymentTokens(
@@ -36,9 +42,11 @@ async function fetchPaymentTokens(
 
 export function usePaymentTokens(options?: UsePaymentTokensOptions) {
   const blockchainId = options?.blockchainId;
+  const includeUnsupported = options?.includeUnsupported ?? false;
   return useQuery<PaymentToken[]>({
     queryKey: ["payment-tokens", blockchainId ?? "all"],
     queryFn: () => fetchPaymentTokens(blockchainId),
+    select: includeUnsupported ? undefined : filterSupportedTokens,
     staleTime: 5 * 60 * 1000,
   });
 }

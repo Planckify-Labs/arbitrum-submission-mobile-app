@@ -30,6 +30,7 @@ import {
 } from "@/services/bridgeRoutes/caip";
 import type { Namespace } from "@/services/chains/types";
 import { foldSymbol } from "@/services/swap/routeAck";
+import { isTokenSupported } from "@/services/tokens/tokenSupport";
 import { addressesEqual } from "@/services/walletKit/chainInfo";
 import {
   type ExecutorContext,
@@ -248,7 +249,14 @@ export const swapFindToken: MobileToolExecutor = (input, context) =>
     // No row: ask the providers (via the backend).
     let found: TBridgeToken[] = [];
     try {
-      found = await bridgeApi.searchTokens(chain, query);
+      found = (await bridgeApi.searchTokens(chain, query)).filter((t) =>
+        isTokenSupported({
+          symbol: t.symbol,
+          // CAIP-19 asset id: `<chain>/erc20:<address>` for contract tokens.
+          contractAddress: t.caip19.split(":").pop() ?? null,
+          isNativeCurrency: t.isNative,
+        }),
+      );
     } catch (err) {
       if (__DEV__) console.warn("[swap/findToken] provider search failed", err);
       throw new ExecutorError(ExecutorErrorCode.NetworkError);

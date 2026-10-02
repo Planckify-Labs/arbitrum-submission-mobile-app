@@ -4,6 +4,7 @@
  */
 
 import * as SQLite from "expo-sqlite";
+import { filterSupportedTokens } from "./tokenSupport";
 import type { TokenInfo } from "./types";
 
 // ─── Default token list (top tokens per chain) ──────────────────────
@@ -281,11 +282,13 @@ function getDb(): SQLite.SQLiteDatabase {
 // ─── Public API ──────────────────────────────────────────────────────
 
 export function getDefaultTokens(chainId: number): TokenInfo[] {
-  return DEFAULT_TOKENS.filter((t) => t.chainId === chainId);
+  return filterSupportedTokens(
+    DEFAULT_TOKENS.filter((t) => t.chainId === chainId),
+  );
 }
 
 export function getAllDefaultTokens(): TokenInfo[] {
-  return [...DEFAULT_TOKENS];
+  return filterSupportedTokens([...DEFAULT_TOKENS]);
 }
 
 export function isDefaultToken(

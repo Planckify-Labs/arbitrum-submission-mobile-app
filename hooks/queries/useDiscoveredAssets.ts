@@ -25,6 +25,7 @@ import type {
   TPortfolioChainSelector,
   TPortfolioEnvelope,
 } from "@/api/types/portfolio";
+import { isTokenSupported } from "@/services/tokens/tokenSupport";
 
 /** Matches the server's discovery TTL, so we don't refetch more often than
  *  the cache behind it can possibly change. */
@@ -84,7 +85,9 @@ export function useDiscoveredAssets({
   }, [refresh]);
 
   return {
-    assets: query.data?.data ?? [],
+    assets: (query.data?.data ?? []).filter((a) =>
+      isTokenSupported({ symbol: a.symbol, contractAddress: a.address }),
+    ),
     status: query.data?.status ?? "ready",
     fetchedAt: query.data?.fetchedAt,
     fromCache: query.data?.fromCache ?? false,

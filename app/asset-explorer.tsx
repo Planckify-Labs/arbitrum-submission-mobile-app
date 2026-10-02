@@ -39,6 +39,7 @@ import { useUserAssetsWithBalances } from "@/hooks/useUserAssetsWithBalances";
 import { useWallet } from "@/hooks/useWallet";
 import { resolveNamespace } from "@/hooks/useWallet.helpers";
 import { foldAddressForKey } from "@/services/chains/addressCompare";
+import { CHAIN_LOCKDOWN_ACTIVE } from "@/services/walletKit/chainSupport";
 import {
   adaptAssetForNetwork,
   filterAssets,
@@ -250,11 +251,12 @@ export default function AssetExplorer() {
 
       setAvailableAssets([...tokenAssets, ...extras]);
     } else if (!activeBlockchainId || !isLoadingTokens) {
-      const networkAssets = getNetworkSpecificAssets(
-        SAMPLE_ASSETS,
-        activeNetwork,
-        ALL_NETWORKS,
-      );
+      // `SAMPLE_ASSETS` is dummy data (BTC, BNB, USDT, USDC, DAI...). With
+      // the chain lockdown on it would show assets the build hides, so the
+      // list stays empty until the real catalogue loads.
+      const networkAssets = CHAIN_LOCKDOWN_ACTIVE
+        ? []
+        : getNetworkSpecificAssets(SAMPLE_ASSETS, activeNetwork, ALL_NETWORKS);
       setAvailableAssets(networkAssets);
     }
   }, [

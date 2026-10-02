@@ -32,6 +32,7 @@ import {
   ROBINHOOD_TESTNET_CHAIN_ID,
 } from "@/services/chains/evm/arbitrumStack";
 import type { Namespace } from "@/services/chains/types";
+import { isTokenSupported } from "@/services/tokens/tokenSupport";
 import { walletKitRegistry } from "./registry";
 import type { WalletKitAdapter } from "./types";
 
@@ -88,7 +89,13 @@ export function isWalletSupported(wallet: Pick<TWallet, "namespace">): boolean {
 /** Filters a `/blockchains` row list down to what the app surfaces. */
 export function filterSupportedBlockchains(rows: TBlockchain[]): TBlockchain[] {
   if (!CHAIN_LOCKDOWN_ACTIVE) return rows;
-  return rows.filter(isBlockchainSupported);
+  return rows
+    .filter(isBlockchainSupported)
+    .map((row) =>
+      row.tokens
+        ? { ...row, tokens: row.tokens.filter(isTokenSupported) }
+        : row,
+    );
 }
 
 /** Display-only wallet filter for lists, switchers and pairings. */

@@ -1,6 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import type { TCryptoAsset } from "@/constants/types/assetTypes";
+import { filterSupportedTokens } from "@/services/tokens/tokenSupport";
 import {
   addAsset,
   addCustomToken,
@@ -126,15 +127,22 @@ export const useUserAssets = () => {
     [userAssets],
   );
 
-  const getFilteredAssets = useCallback(
-    (searchQuery: string) => {
-      return filterAssets(userAssets ?? [], searchQuery);
-    },
+  // Stablecoin lockdown is applied on the read only: the saved list keeps
+  // every asset, so nothing is lost when the flag flips off.
+  const visibleUserAssets = useMemo(
+    () => filterSupportedTokens(userAssets ?? []),
     [userAssets],
   );
 
+  const getFilteredAssets = useCallback(
+    (searchQuery: string) => {
+      return filterAssets(visibleUserAssets, searchQuery);
+    },
+    [visibleUserAssets],
+  );
+
   return {
-    userAssets: userAssets ?? [],
+    userAssets: visibleUserAssets,
     addAsset: handleAddAsset,
     removeAsset: handleRemoveAsset,
     addCustomToken: handleAddCustomToken,

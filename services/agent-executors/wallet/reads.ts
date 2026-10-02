@@ -24,6 +24,7 @@ import type { TBlockchain } from "@/api/types/blockchain";
 import type { TToken } from "@/api/types/token";
 import { resolveNamespace } from "@/hooks/useWallet.helpers";
 import { storage } from "@/lib/storage/mmkv";
+import { isTokenSupported } from "@/services/tokens/tokenSupport";
 import { pendingTxStore } from "../../pendingTxStore";
 import {
   type BalanceGroup,
@@ -548,6 +549,13 @@ async function loadDiscoveredTokensForChain(
       // Native is added separately, and non-EVM rows can't be read by the
       // EVM scan that consumes this.
       if (!asset.address || asset.namespace !== "eip155") continue;
+      if (
+        !isTokenSupported({
+          symbol: asset.symbol,
+          contractAddress: asset.address,
+        })
+      )
+        continue;
       const address = asset.address.toLowerCase();
       if (known.has(address)) continue;
       known.add(address);
@@ -630,6 +638,7 @@ async function scanChainTokens(
 
   const erc20Rows: TToken[] = chainTokens.filter((t) => {
     if (t.isNativeCurrency) return false;
+    if (!isTokenSupported(t)) return false;
     if (
       typeof input.is_stable_coin === "boolean" &&
       t.isStablecoin !== input.is_stable_coin

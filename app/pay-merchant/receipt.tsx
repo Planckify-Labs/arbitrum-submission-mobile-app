@@ -366,7 +366,10 @@ function ReceiptBody({
   merchantName?: string;
 }) {
   const fiatLabel = formatIdrMinor(extractFiatMinor(intent));
-  const paymentTokens = usePaymentTokens({ blockchainId: intent.blockchainId });
+  const paymentTokens = usePaymentTokens({
+    blockchainId: intent.blockchainId,
+    includeUnsupported: true,
+  });
   const paymentToken = useMemo(() => {
     const wanted = intent.sourceTokenId ?? intent.sourceToken?.id;
     if (!wanted || !paymentTokens.data?.length) return null;

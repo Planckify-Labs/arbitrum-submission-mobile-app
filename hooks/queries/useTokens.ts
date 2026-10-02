@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { tokenApi } from "@/api/endpoints/tokens";
 import type { TToken, TTokenSearchParams } from "@/api/types/token";
 import { storage } from "@/lib/storage/mmkv";
+import { filterSupportedTokens } from "@/services/tokens/tokenSupport";
 
 const TOKEN_STORAGE_KEY = "cached_tokens";
 const TOKEN_TIMESTAMP_KEY = "cached_tokens_timestamp";
@@ -96,6 +97,9 @@ export const useTokens = (options?: TTokenSearchParams) => {
         throw err;
       }
     },
+    // Stablecoin lockdown is applied at the read, not in the MMKV cache,
+    // so nothing is lost when the flag flips. Identity when it is off.
+    select: filterSupportedTokens,
     staleTime: STALE_TIME,
     gcTime: OFFLINE_CACHE_TTL,
     refetchOnMount: true,

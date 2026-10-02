@@ -13,6 +13,7 @@ import {
   getUserTokens,
   isDefaultToken,
 } from "@/services/tokens/tokenList";
+import { filterSupportedTokens } from "@/services/tokens/tokenSupport";
 import type {
   GroupedTokenBalances,
   TokenBalanceItem,
@@ -125,7 +126,7 @@ export function useGroupedTokenBalances(
       const allPrefs = getAllTokenPrefs();
 
       // Build balance items with prefs
-      const items = balances.map((t) => {
+      const items = filterSupportedTokens(balances).map((t) => {
         const key = `${t.contractAddress.toLowerCase()}:${t.chainId}`;
         const prefs = allPrefs.get(key) ?? {
           isPinned: false,
