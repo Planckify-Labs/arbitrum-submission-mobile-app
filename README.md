@@ -20,7 +20,7 @@
 pnpm install
 pnpm start
 ```
-Test the Android preview build on a physical device with biometrics. Passkey derivation needs the WebAuthn PRF extension, which emulators usually lack. Download link is in the hub README.
+Test the Android preview build on a physical device with biometrics. Passkey derivation needs the WebAuthn PRF extension, which emulators usually lack. [Download the preview APK](https://drive.google.com/file/d/1h1OTzwFwwR9FzChcKUNEp061nYt7gfJo/view?usp=sharing).
 
 
 ---
