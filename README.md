@@ -8,8 +8,8 @@
 
 ## Where to look
 - Passkey wallet: `services/walletKit/evm/mera/`
-- Arbitrum and Robinhood chain focus: `services/chains/evm/arbitrumStack.ts`, `services/walletKit/chainSupport.ts`, flag `FEATURE_CHAIN_LOCKDOWN` in `constants/configs/featureFlags.ts`
-- USDG-only stablecoin filter (matched by contract address): `services/tokens/tokenSupport.ts`
+- Arbitrum and Robinhood Chain configuration: `services/chains/evm/arbitrumStack.ts`, `services/walletKit/chainSupport.ts`
+- USDG token handling (recognised by contract address): `services/tokens/tokenSupport.ts`
 - QRIS scan and detection: `app/scan-to-pay.tsx`, `services/paymentIntent/detectors/qris.ts`
 - Agent chat UI: `components/home/TakumiAgent/`
 - On-chain settlement path: `services/nanopay/pathOnchainSettlement.ts`
@@ -22,7 +22,6 @@ pnpm start
 ```
 Test the Android preview build on a physical device with biometrics. Passkey derivation needs the WebAuthn PRF extension, which emulators usually lack. Download link is in the hub README.
 
-Other chains (Solana, Sui, Stellar, Monad, Arc) remain in the code but are hidden in this build by `FEATURE_CHAIN_LOCKDOWN`.
 
 ---
 
