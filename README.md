@@ -2,7 +2,7 @@
 
 > Part of the TakumiPay submission to the Arbitrum Open House Singapore Online Buildathon. Start at the hub: **[https://github.com/Planckify-Labs/arbitrum-submission](https://github.com/Planckify-Labs/arbitrum-submission)** (fact sheet, deployments with transaction hashes, known limitations, reproduction commands).
 
-**Role of this repository:** React Native + Expo wallet: passkey login, USDG send/receive, points deposit, bill and merchant payment, Takumi Agent chat.
+**Role of this repository:** React Native + Expo wallet that lets USDG holders on Arbitrum and Robinhood Chain scan a QRIS code and pay Indonesian merchants in USDG. Also: passkey login, USDG send/receive, points deposit, bill payment, Takumi Agent chat.
 
 **Chains:** Arbitrum One (42161), Arbitrum Sepolia (421614), Robinhood Chain testnet (46630). **Stablecoin:** Paxos USDG. **License:** GPL-3.0.
 
@@ -10,6 +10,7 @@
 - Passkey wallet: `services/walletKit/evm/mera/`
 - Arbitrum and Robinhood chain focus: `services/chains/evm/arbitrumStack.ts`, `services/walletKit/chainSupport.ts`, flag `FEATURE_CHAIN_LOCKDOWN` in `constants/configs/featureFlags.ts`
 - USDG-only stablecoin filter (matched by contract address): `services/tokens/tokenSupport.ts`
+- QRIS scan and detection: `app/scan-to-pay.tsx`, `services/paymentIntent/detectors/qris.ts`
 - Agent chat UI: `components/home/TakumiAgent/`
 - On-chain settlement path: `services/nanopay/pathOnchainSettlement.ts`
 - Architecture notes for contributors: `CLAUDE.md`
